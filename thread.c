@@ -125,6 +125,7 @@ int thread_yield(void)
 
 void thread_exit(void *retval)
 {
+	(void)retval;
 	current_thread->state = THREAD_TERMINATED;
 
 	if (current_thread != &main_thread) {
