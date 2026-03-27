@@ -1,33 +1,63 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -Werror
+CC      = gcc
+CFLAGS  = -Wall -Wextra -g -fPIC
+LDFLAGS = -L. -lthread -lpthread
 
-all: thread.o
-
-thread.o: thread.c thread.h
-	$(CC) $(CFLAGS) -c thread.c -o thread.o
-
-# Répertoire d'installation
+# Répertoires
+TEST_DIR = test
 INSTALL_DIR = install
 BIN_DIR = $(INSTALL_DIR)/bin
 LIB_DIR = $(INSTALL_DIR)/lib
 
-# Fichiers à installer (à adapter selon vos binaires réels)
-LIBS = libthread.a libthread.so
-TESTS = 
-PTHREAD_TESTS = 
+# Fichiers sources
+SRC = thread.c
+OBJ = thread.o
+LIB = libthread.so
 
-install: all | $(BIN_DIR) $(LIB_DIR)
-	cp $(LIBS) $(LIB_DIR) 2>/dev/null || true
-	for t in $(TESTS); do cp $$t $(BIN_DIR) 2>/dev/null || true; done
-	for t in $(PTHREAD_TESTS); do cp $$t $(BIN_DIR) 2>/dev/null || true; done
+# Liste des tests (on récupère tous les .c dans test/)
+TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
+TEST_BINS = $(patsubst $(TEST_DIR)/%.c, %, $(TEST_SRCS))
+TEST_BINS_PTHREAD = $(patsubst %, %-pthread, $(TEST_BINS))
 
-$(BIN_DIR):
-	mkdir -p $@
-$(LIB_DIR):
-	mkdir -p $@
+# --- Cibles principales ---
+
+all: $(LIB) tests
+
+# Compilation de la bibliothèque partagée (.so)
+$(LIB): $(SRC)
+	$(CC) $(CFLAGS) -shared -o $@ $^
+
+# Compilation des tests version "maison"
+tests: $(LIB)
+	@mkdir -p bin
+	@for t in $(TEST_BINS); do \
+		$(CC) $(CFLAGS) $(TEST_DIR)/$$t.c -o bin/$$t $(LDFLAGS); \
+	done
+
+# Compilation des tests version "pthreads" (-DUSE_PTHREAD)
+pthreads:
+	@mkdir -p bin
+	@for t in $(TEST_BINS); do \
+		$(CC) $(CFLAGS) -DUSE_PTHREAD $(TEST_DIR)/$$t.c -o bin/$$t-pthread -lpthread; \
+	done
+
+# --- Installation ---
+
+install: all pthreads
+	@mkdir -p $(LIB_DIR) $(BIN_DIR)
+	cp $(LIB) $(LIB_DIR)/
+	cp bin/* $(BIN_DIR)/
+	@echo "Installation terminée dans ./$(INSTALL_DIR)"
+
+# --- Utilitaires ---
+
+# Exécute tous les binaires dans bin/ sous Valgrind
+valgrind: all
+	@for t in $(wildcard bin/*); do \
+		echo "--- Running valgrind on $$t ---"; \
+		LD_LIBRARY_PATH=. valgrind --leak-check=full --show-reachable=yes --track-origins=yes ./$$t; \
+	done
 
 clean:
-	rm -f *.o
+	rm -rf *.o *.so bin $(INSTALL_DIR)
 
-clean:
-	rm -f *.o
+.PHONY: all tests pthreads install valgrind clean
