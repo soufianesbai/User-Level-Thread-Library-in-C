@@ -27,7 +27,7 @@ $(LIB): $(SRC)
 	$(CC) $(CFLAGS) -shared -o $@ $^
 
 # Build tests with custom thread library
-test: $(LIB)
+tests: $(LIB)
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
 		$(CC) $(CFLAGS) $(TEST_DIR)/$$t.c -o bin/$$t $(LDFLAGS); \
