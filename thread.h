@@ -34,7 +34,7 @@ extern int thread_join(thread_t thread, void **retval);
  * cette fonction ne retourne jamais.
  *
  * L'attribut noreturn aide le compilateur à optimiser le code de
- * l'application (élimination de code mort). Attention à ne pas mettre
+ * l'application (élimination de code dead). Attention à ne pas mettre
  * cet attribut dans votre interface tant que votre thread_exit()
  * n'est pas correctement implémenté (il ne doit jamais retourner).
  */
@@ -42,7 +42,7 @@ extern void thread_exit(void *retval) __attribute__((__noreturn__));
 
 /* Interface possible pour les mutex */
 typedef struct thread_mutex {
-  int dummy;
+  int locked; // 0 = unlocked, 1 = locked
 } thread_mutex_t;
 int thread_mutex_init(thread_mutex_t *mutex);
 int thread_mutex_destroy(thread_mutex_t *mutex);

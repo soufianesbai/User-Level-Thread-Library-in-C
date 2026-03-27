@@ -2,39 +2,39 @@ CC      = gcc
 CFLAGS  = -Wall -Wextra -g -fPIC
 LDFLAGS = -L. -lthread -lpthread
 
-# Répertoires
+# Directories
 TEST_DIR = test
 INSTALL_DIR = install
 BIN_DIR = $(INSTALL_DIR)/bin
 LIB_DIR = $(INSTALL_DIR)/lib
 
-# Fichiers sources
+# Source files
 SRC = thread.c
 OBJ = thread.o
 LIB = libthread.so
 
-# Liste des tests (on récupère tous les .c dans test/)
+# List of tests (get all .c files in test/)
 TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
 TEST_BINS = $(patsubst $(TEST_DIR)/%.c, %, $(TEST_SRCS))
 TEST_BINS_PTHREAD = $(patsubst %, %-pthread, $(TEST_BINS))
 
-# --- Cibles principales ---
+# --- Main targets ---
 
 all: $(LIB) tests
 
-# Compilation de la bibliothèque partagée (.so)
+# Build the shared library (.so)
 $(LIB): $(SRC)
 	$(CC) $(CFLAGS) -shared -o $@ $^
 
-# Compilation des tests version "maison"
-tests: $(LIB)
+# Build tests with custom thread library
+test: $(LIB)
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
 		$(CC) $(CFLAGS) $(TEST_DIR)/$$t.c -o bin/$$t $(LDFLAGS); \
 	done
 
-# Compilation des tests version "pthreads" (-DUSE_PTHREAD)
-pthreads:
+# Build tests with pthreads (-DUSE_PTHREAD)
+pthread:
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
 		$(CC) $(CFLAGS) -DUSE_PTHREAD $(TEST_DIR)/$$t.c -o bin/$$t-pthread -lpthread; \
@@ -48,9 +48,9 @@ install: all pthreads
 	cp bin/* $(BIN_DIR)/
 	@echo "Installation terminée dans ./$(INSTALL_DIR)"
 
-# --- Utilitaires ---
+# --- Utilities ---
 
-# Exécute tous les binaires dans bin/ sous Valgrind
+# Run all binaries in bin/ with Valgrind
 valgrind: all
 	@for t in $(wildcard bin/*); do \
 		echo "--- Running valgrind on $$t ---"; \
@@ -60,4 +60,4 @@ valgrind: all
 clean:
 	rm -rf *.o *.so bin $(INSTALL_DIR)
 
-.PHONY: all tests pthreads install valgrind clean
+.PHONY: all test pthreads install valgrind clean
