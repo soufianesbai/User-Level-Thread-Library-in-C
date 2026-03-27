@@ -144,6 +144,15 @@ void thread_exit(void *retval) {
  * la valeur renvoyée par le thread est placée dans *retval.
  * si retval est NULL, la valeur de retour est ignorée.
  */
-extern int thread_join(thread_t thread, void **retval){
-	// me
+extern int thread_join(thread_t thread_handle, void **retval) {
+  if (thread_handle == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  if (retval != NULL) {
+    *retval = ((thread *)thread_handle)->retval;
+  }
+
+  return 0;
 }
