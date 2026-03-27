@@ -3,7 +3,7 @@ CFLAGS  = -Wall -Wextra -g -fPIC
 LDFLAGS = -L. -lthread -lpthread
 
 # Directories
-TEST_DIR = test
+TEST_DIR    = test
 INSTALL_DIR = install
 BIN_DIR = $(INSTALL_DIR)/bin
 LIB_DIR = $(INSTALL_DIR)/lib
@@ -30,11 +30,11 @@ $(LIB): $(SRC)
 tests: $(LIB)
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
-		$(CC) $(CFLAGS) -I. $(TEST_DIR)/$$t.c -o bin/$$t $(LDFLAGS); \
+		$(CC) $(CFLAGS) -I. $(TEST_DIR)/$$t.c -o bin/$$t $(LDFLAGS) -Wl,-rpath=$(PWD)/$(INSTALL_DIR)/lib; \
 	done
 
 # Build tests with pthreads (-DUSE_PTHREAD)
-pthread:
+pthreads:
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
 		$(CC) $(CFLAGS) -DUSE_PTHREAD -I. $(TEST_DIR)/$$t.c -o bin/$$t-pthread -lpthread; \
@@ -54,10 +54,10 @@ install: all pthreads
 valgrind: all
 	@for t in $(wildcard bin/*); do \
 		echo "--- Running valgrind on $$t ---"; \
-		LD_LIBRARY_PATH=. valgrind --leak-check=full --show-reachable=yes --track-origins=yes ./$$t; \
+		LD_LIBRARY_PATH=$(PWD)/$(INSTALL_DIR)/lib valgrind --leak-check=full --show-reachable=yes --track-origins=yes ./$$t; \
 	done
 
 clean:
 	rm -rf *.o *.so bin $(INSTALL_DIR)
 
-.PHONY: all test pthreads install valgrind clean
+.PHONY: all tests pthreads install valgrind clean

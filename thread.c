@@ -95,25 +95,25 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
 }
  
 int thread_yield(void) {
-  thread *next;
-  thread *prev = current_thread;
- 
-  next = STAILQ_FIRST(&ready_queue);
-  if (!next) {
-    // No other thread is ready to run, so we just return.
+    thread *next = STAILQ_FIRST(&ready_queue);
+    if (!next) {
+        // No other thread is ready to run, so we just return and continue executing the current thread.
+        return 0;
+    }
+
+    thread *prev = current_thread;
+    STAILQ_REMOVE_HEAD(&ready_queue, entries); // Remove the next thread from the ready queue
+
+    if (prev->state == THREAD_RUNNING) {
+        prev->state = THREAD_READY;
+        STAILQ_INSERT_TAIL(&ready_queue, prev, entries); // Put the current thread back in the ready queue if it's still running
+    }
+
+    current_thread = next;
+    next->state = THREAD_RUNNING;
+
+    swapcontext(&prev->context, &next->context);
     return 0;
-  }
- 
-  // Move the current thread to the end of the ready queue and switch to the next thread.
-  STAILQ_REMOVE_HEAD(&ready_queue, entries);
-  if (prev->state == THREAD_RUNNING) {
-    prev->state = THREAD_READY;
-    STAILQ_INSERT_TAIL(&ready_queue, prev, entries);
-  }
-  current_thread = next;
-  next->state = THREAD_RUNNING;
-  swapcontext(&prev->context, &next->context);
-  return 0;
 }
 
 void thread_exit(void *retval) {
