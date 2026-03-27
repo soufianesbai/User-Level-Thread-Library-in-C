@@ -37,7 +37,7 @@ tests: $(LIB)
 pthreads:
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
-		$(CC) $(CFLAGS) -DUSE_PTHREAD $(TEST_DIR)/$$t.c -o bin/$$t-pthread -lpthread; \
+		$(CC) $(CFLAGS) -DUSE_PTHREAD $(TEST_DIR)/$$t.c -o bin/$$t-pthread -L. -lthread -lpthread -Wl,-rpath='$$ORIGIN/../lib'; \
 	done
 
 # --- Installation ---
@@ -46,7 +46,6 @@ install: all pthreads
 	@mkdir -p $(LIB_DIR) $(BIN_DIR)
 	cp $(LIB) $(LIB_DIR)/
 	cp bin/* $(BIN_DIR)/
-	@echo "Installation terminée dans ./$(INSTALL_DIR)"
 
 # --- Utilities ---
 
