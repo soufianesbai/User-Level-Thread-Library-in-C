@@ -49,8 +49,6 @@ static void thread_entry(void) {
 thread_t thread_self(void) { return (thread_t)current_thread; }
 
 int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
-  thread *newth;
-
   if (!scheduler_initialized) {
     STAILQ_INIT(&ready_queue);
     STAILQ_INSERT_TAIL(&ready_queue, &main_thread, entries);
@@ -62,7 +60,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     return -1;
   }
 
-  newth = malloc(sizeof(*newth));
+    thread *newth = malloc(sizeof(*newth));
   if (newth == NULL) {
     errno = ENOMEM; // Out of memory
     return -1;
@@ -99,7 +97,7 @@ int thread_yield(void) {
   thread *next;
   thread *prev = current_thread;
 
-  // To verify !!!
+  // Remove terminated threads from the front of the ready queue.
   while ((next = STAILQ_FIRST(&ready_queue)) &&
          next->state == THREAD_TERMINATED) {
     STAILQ_REMOVE_HEAD(&ready_queue, entries);

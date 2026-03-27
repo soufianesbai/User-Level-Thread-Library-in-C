@@ -1,12 +1,10 @@
-# Build artifacts
 *.o
 *.a
 *.so
 *.out
 
-# Local binaries
 thread
 
-# Tooling / editor files
 .vscode/
-compile_commands.json
+
+my_files/
