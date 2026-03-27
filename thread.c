@@ -17,6 +17,7 @@ typedef struct thread {
   void *arg;                  // Argument to pass to the start routine
   STAILQ_ENTRY(thread) entries; // Queue entries for the ready queue
   int state;                    // Thread state: READY, RUNNING, TERMINATED
+  void * retval;				   // Return value from the thread
 } thread;
 
 // Queue to hold the ready threads
@@ -123,7 +124,7 @@ int thread_yield(void) {
 }
 
 void thread_exit(void *retval) {
-  (void)retval;
+  current_thread->retval = retval;
   current_thread->state = THREAD_TERMINATED;
 
   if (current_thread != &main_thread) {
@@ -137,4 +138,12 @@ void thread_exit(void *retval) {
   // If we reach here, it means there are no more threads to run, so we exit the
   // program.
   abort();
+}
+
+/* attendre la fin d'exécution d'un thread.
+ * la valeur renvoyée par le thread est placée dans *retval.
+ * si retval est NULL, la valeur de retour est ignorée.
+ */
+extern int thread_join(thread_t thread, void **retval){
+	// me
 }
