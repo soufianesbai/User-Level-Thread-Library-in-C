@@ -51,6 +51,9 @@ thread_t thread_self(void) { return (thread_t)current_thread; }
 int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   if (!scheduler_initialized) {
     STAILQ_INIT(&ready_queue);
+    if (getcontext(&main_thread.context) == -1) {
+      return -1;
+    }
     scheduler_initialized = 1;
   }
  
@@ -66,12 +69,12 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   }
  
   void *stack = NULL;
-  if (posix_memalign(&stack, 16, STACK_SIZE) != 0) {
+  int rc = posix_memalign(&stack, 16, STACK_SIZE);
+  if (rc != 0) {
     free(newth);
-    errno = ENOMEM; // Out of memory
+    errno = rc;
     return -1;
   }
-  newth->context.uc_stack.ss_sp = stack;
  
   newth->id = next_thread_id++;
   newth->start_fun = func;
@@ -80,12 +83,15 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->joined = 0;
  
   if (getcontext(&newth->context) == -1) {
-    free(newth->context.uc_stack.ss_sp);
+    free(stack);
     free(newth);
     return -1;
   }
  
+  // getcontext initializes the whole ucontext; stack settings must come after.
+  newth->context.uc_stack.ss_sp = stack;
   newth->context.uc_stack.ss_size = STACK_SIZE;
+  newth->context.uc_stack.ss_flags = 0;
   newth->context.uc_link = NULL;
   makecontext(&newth->context, thread_entry, 0);
  
