@@ -175,7 +175,7 @@ extern int thread_join(thread_t thread_handle, void **retval) {
  
   // Free the stack and structure of the thread (except main)
   if (target != &main_thread) {
-    free(target->context.uc_stack.ss_sp);
+    munmap(target->context.uc_stack.ss_sp, STACK_SIZE);
     free(target);
   }
  
