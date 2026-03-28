@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <sys/queue.h>
 #include <ucontext.h>
+#include <sys/mman.h>  
  
 #define STACK_SIZE (128 * 1024)
 #define THREAD_READY 0
@@ -68,22 +69,24 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     return -1;
   }
  
-  void *stack = NULL;
-  int rc = posix_memalign(&stack, 16, STACK_SIZE);
-  if (rc != 0) {
+  void *stack = mmap(NULL, STACK_SIZE,
+                   PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
+                   -1, 0);
+if (stack == MAP_FAILED) {
     free(newth);
-    errno = rc;
     return -1;
-  }
+}
  
   newth->id = next_thread_id++;
   newth->start_fun = func;
   newth->arg = funcarg;
   newth->state = THREAD_READY;
   newth->joined = 0;
+  newth->retval = NULL;
  
   if (getcontext(&newth->context) == -1) {
-    free(stack);
+    munmap(stack, STACK_SIZE);
     free(newth);
     return -1;
   }
