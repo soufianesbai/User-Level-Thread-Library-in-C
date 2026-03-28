@@ -1,9 +1,9 @@
-CC      = gcc
+CC = gcc
 CFLAGS  = -Wall -Wextra -g -fPIC
 LDFLAGS = -L. -lthread -lpthread
 
 # Directories
-TEST_DIR    = test
+TEST_DIR = test
 INSTALL_DIR = install
 BIN_DIR = $(INSTALL_DIR)/bin
 LIB_DIR = $(INSTALL_DIR)/lib
@@ -19,12 +19,7 @@ TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
 TEST_BINS = $(patsubst $(TEST_DIR)/%.c, %, $(TEST_SRCS))
 TEST_BINS_PTHREAD = $(patsubst %, %-pthread, $(TEST_BINS))
 
-# Ajout du test pour mutex
-TEST_MUTEX_BIN = test_mutex
-
-
 # --- Main targets ---
-
 
 all: $(LIB) tests 
 

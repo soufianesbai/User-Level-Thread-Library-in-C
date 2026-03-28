@@ -3,6 +3,10 @@
 
 #ifndef USE_PTHREAD
 
+#include <sys/queue.h>
+
+STAILQ_HEAD(thread_queue, thread);  
+
 /* identifiant de thread
  * NB: pourra être un entier au lieu d'un pointeur si ca vous arrange,
  *     mais attention aux inconvénient des tableaux de threads
@@ -39,8 +43,7 @@ extern int thread_join(thread_t thread, void **retval);
  * n'est pas correctement implémenté (il ne doit jamais retourner).
  */
 extern void thread_exit(void *retval) __attribute__((__noreturn__));
-#include <sys/queue.h>
-STAILQ_HEAD(thread_queue, thread);  
+
 typedef struct thread_mutex {
     int locked;                         // 0 = libre, 1 = occupé
     struct thread_queue waiting_queue;  // File des threads en attente de ce verrou
