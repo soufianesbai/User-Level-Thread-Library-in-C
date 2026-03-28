@@ -26,7 +26,7 @@ TEST_MUTEX_BIN = test_mutex
 # --- Main targets ---
 
 
-all: $(LIB) tests test_mutex
+all: $(LIB) tests 
 
 # Build the shared library (.so)
 $(LIB): $(SRC)
