@@ -5,7 +5,7 @@
 #include <sys/queue.h>
 #include <ucontext.h>
  
-#define STACK_SIZE (64 * 1024)
+#define STACK_SIZE (128 * 1024)
 #define THREAD_READY 0
 #define THREAD_RUNNING 1
 #define THREAD_TERMINATED 2
@@ -65,12 +65,13 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     return -1;
   }
  
-  newth->context.uc_stack.ss_sp = malloc(STACK_SIZE);
-  if (newth->context.uc_stack.ss_sp == NULL) {
+  void *stack = NULL;
+  if (posix_memalign(&stack, 16, STACK_SIZE) != 0) {
     free(newth);
     errno = ENOMEM; // Out of memory
     return -1;
   }
+  newth->context.uc_stack.ss_sp = stack;
  
   newth->id = next_thread_id++;
   newth->start_fun = func;
@@ -134,7 +135,7 @@ void thread_exit(void *retval) {
 
     // Switch to the next thread's context. Since the current thread is terminating, we use setcontext instead of swapcontext.
     setcontext(&next->context);
-    
+
     // If setcontext returns, it failed. Exit with error.
     exit(1);
 }
