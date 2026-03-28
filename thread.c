@@ -5,8 +5,10 @@
 #include <sys/queue.h>
 #include <ucontext.h>
 #include <sys/mman.h>  
+#include <valgrind/valgrind.h>
  
-#define STACK_SIZE (128 * 1024)
+#define STACK_SIZE (1024 * 1024)
+#define GUARD_SIZE 4096
 #define THREAD_READY 0
 #define THREAD_RUNNING 1
 #define THREAD_TERMINATED 2
@@ -20,6 +22,7 @@ typedef struct thread {
   int state; // Thread state: READY, RUNNING, TERMINATED
   void *retval; // Return value from the thread
   int joined; // Flag to detect double-join
+  unsigned valgrind_stack_id; // Valgrind stack ID for memory checking
 } thread;
  
 // Queue to hold the ready threads
@@ -69,14 +72,20 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     return -1;
   }
  
-  void *stack = mmap(NULL, STACK_SIZE,
+  void *map = mmap(NULL, STACK_SIZE + GUARD_SIZE,
                    PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
                    -1, 0);
-if (stack == MAP_FAILED) {
+  if (map == MAP_FAILED) {
     free(newth);
     return -1;
-}
+  }
+ 
+  if (mprotect(map, GUARD_SIZE, PROT_NONE) == -1) {
+    munmap(map, STACK_SIZE + GUARD_SIZE);
+    free(newth);
+    return -1;
+  }
  
   newth->id = next_thread_id++;
   newth->start_fun = func;
@@ -86,18 +95,20 @@ if (stack == MAP_FAILED) {
   newth->retval = NULL;
  
   if (getcontext(&newth->context) == -1) {
-    munmap(stack, STACK_SIZE);
+    munmap(map, STACK_SIZE + GUARD_SIZE);
     free(newth);
     return -1;
   }
  
-  // getcontext initializes the whole ucontext; stack settings must come after.
-  newth->context.uc_stack.ss_sp = stack;
-  newth->context.uc_stack.ss_size = STACK_SIZE;
+  void *stack_base = (char *)map + GUARD_SIZE;
+  newth->context.uc_stack.ss_sp    = stack_base;
+  newth->context.uc_stack.ss_size  = STACK_SIZE;
   newth->context.uc_stack.ss_flags = 0;
   newth->context.uc_link = NULL;
   makecontext(&newth->context, thread_entry, 0);
- 
+  
+  newth->valgrind_stack_id = VALGRIND_STACK_REGISTER(
+      stack_base, (char *)stack_base + STACK_SIZE);
   STAILQ_INSERT_TAIL(&ready_queue, newth, entries);
   *newthread = (thread_t)newth;
  
@@ -175,7 +186,9 @@ extern int thread_join(thread_t thread_handle, void **retval) {
  
   // Free the stack and structure of the thread (except main)
   if (target != &main_thread) {
-    munmap(target->context.uc_stack.ss_sp, STACK_SIZE);
+    VALGRIND_STACK_DEREGISTER(target->valgrind_stack_id);
+    void *map = (char *)target->context.uc_stack.ss_sp - GUARD_SIZE;
+    munmap(map, STACK_SIZE + GUARD_SIZE);
     free(target);
   }
  
