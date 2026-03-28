@@ -40,9 +40,6 @@ tests: $(LIB)
 		$(CC) $(CFLAGS) -I. $(TEST_DIR)/$$t.c -o bin/$$t $(LDFLAGS) -Wl,-rpath=$(PWD)/$(INSTALL_DIR)/lib; \
 	done
 
-# Build test_mutex
-test_mutex: thread.c thread.h
-	$(CC) $(CFLAGS) -I. thread.c test_mutex.c -o bin/test_mutex
 
 # Build tests with pthreads (-DUSE_PTHREAD)
 pthreads:
