@@ -1,3 +1,4 @@
+
 #include "thread.h"
  
 #include <errno.h>
@@ -26,7 +27,7 @@ typedef struct thread {
 } thread;
  
 // Queue to hold the ready threads
-STAILQ_HEAD(thread_queue, thread);
+// STAILQ_HEAD(thread_queue, thread); hadi ghandirha f .h bash tkhdem lina struct d mutex fiha dik thread_queue o haki o haki 
 static struct thread_queue ready_queue;
  
 // The main thread is initialized at the start of the program and will be used
@@ -192,5 +193,55 @@ extern int thread_join(thread_t thread_handle, void **retval) {
     free(target);
   }
  
+  return 0;
+}
+
+
+// --- Implémentation des mutex ---
+#include <stdio.h>
+#include <stdlib.h>
+
+int thread_mutex_init(thread_mutex_t *mutex) {
+  if (mutex == NULL) return -1;
+  mutex->locked = 0;
+  STAILQ_INIT(&mutex->waiting_queue);
+  return 0;
+}
+
+int thread_mutex_destroy(thread_mutex_t *mutex) {
+  if (mutex == NULL || !STAILQ_EMPTY(&mutex->waiting_queue)) {
+    return -1; // On ne détruit pas un mutex si des threads attendent
+  }
+  return 0;
+}
+
+int thread_mutex_lock(thread_mutex_t *mutex) {
+  if (mutex == NULL) return -1;
+
+  while (mutex->locked) {
+    thread *prev = current_thread;
+    thread *next = STAILQ_FIRST(&ready_queue);
+    if (next == NULL) {
+      return -1; // Deadlock potentiel
+    }
+    STAILQ_REMOVE_HEAD(&ready_queue, entries);
+    STAILQ_INSERT_TAIL(&mutex->waiting_queue, prev, entries);
+    current_thread = next;
+    next->state = THREAD_RUNNING;
+    swapcontext(&prev->context, &next->context);
+  }
+  mutex->locked = 1;
+  return 0;
+}
+
+int thread_mutex_unlock(thread_mutex_t *mutex) {
+  if (mutex == NULL) return -1;
+  mutex->locked = 0;
+  if (!STAILQ_EMPTY(&mutex->waiting_queue)) {
+    thread *revived = STAILQ_FIRST(&mutex->waiting_queue);
+    STAILQ_REMOVE_HEAD(&mutex->waiting_queue, entries);
+    revived->state = THREAD_READY;
+    STAILQ_INSERT_TAIL(&ready_queue, revived, entries);
+  }
   return 0;
 }

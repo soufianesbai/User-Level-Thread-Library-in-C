@@ -39,11 +39,13 @@ extern int thread_join(thread_t thread, void **retval);
  * n'est pas correctement implémenté (il ne doit jamais retourner).
  */
 extern void thread_exit(void *retval) __attribute__((__noreturn__));
-
-/* Interface possible pour les mutex */
+#include <sys/queue.h>
+STAILQ_HEAD(thread_queue, thread);  
 typedef struct thread_mutex {
-  int locked; // 0 = unlocked, 1 = locked
+    int locked;                         // 0 = libre, 1 = occupé
+    struct thread_queue waiting_queue;  // File des threads en attente de ce verrou
 } thread_mutex_t;
+
 int thread_mutex_init(thread_mutex_t *mutex);
 int thread_mutex_destroy(thread_mutex_t *mutex);
 int thread_mutex_lock(thread_mutex_t *mutex);

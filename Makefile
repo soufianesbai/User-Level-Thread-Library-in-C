@@ -13,18 +13,25 @@ SRC = thread.c
 OBJ = thread.o
 LIB = libthread.so
 
+
 # List of tests (get all .c files in test/)
 TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
 TEST_BINS = $(patsubst $(TEST_DIR)/%.c, %, $(TEST_SRCS))
 TEST_BINS_PTHREAD = $(patsubst %, %-pthread, $(TEST_BINS))
 
+# Ajout du test pour mutex
+TEST_MUTEX_BIN = test_mutex
+
+
 # --- Main targets ---
 
-all: $(LIB) tests
+
+all: $(LIB) tests test_mutex
 
 # Build the shared library (.so)
 $(LIB): $(SRC)
 	$(CC) $(CFLAGS) -shared -o $@ $^
+
 
 # Build tests with custom thread library
 tests: $(LIB)
@@ -32,6 +39,10 @@ tests: $(LIB)
 	@for t in $(TEST_BINS); do \
 		$(CC) $(CFLAGS) -I. $(TEST_DIR)/$$t.c -o bin/$$t $(LDFLAGS) -Wl,-rpath=$(PWD)/$(INSTALL_DIR)/lib; \
 	done
+
+# Build test_mutex
+test_mutex: thread.c thread.h
+	$(CC) $(CFLAGS) -I. thread.c test_mutex.c -o bin/test_mutex
 
 # Build tests with pthreads (-DUSE_PTHREAD)
 pthreads:
