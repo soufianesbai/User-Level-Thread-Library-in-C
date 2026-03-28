@@ -117,14 +117,26 @@ int thread_yield(void) {
 }
 
 void thread_exit(void *retval) {
-  current_thread->retval = retval;
-  current_thread->state = THREAD_TERMINATED;
- 
-  // Yield to the scheduler to run the next thread. If there are no more threads, the program will exit.
-  thread_yield();
- 
-  // If we reach here, it means there are no more threads to run, so we exit the program.
-  exit(0);
+    current_thread->retval = retval;
+    current_thread->state = THREAD_TERMINATED;
+
+    // Find the next thread to run
+    thread *next = STAILQ_FIRST(&ready_queue);
+    if (!next) {
+        // No other thread is ready to run, so we just exit the program.
+        exit(0);
+    }
+
+    // Remove the next thread from the ready queue and switch to it
+    STAILQ_REMOVE_HEAD(&ready_queue, entries);
+    current_thread = next;
+    next->state = THREAD_RUNNING;
+
+    // Switch to the next thread's context. Since the current thread is terminating, we use setcontext instead of swapcontext.
+    setcontext(&next->context);
+    
+    // If setcontext returns, it failed. Exit with error.
+    exit(1);
 }
 
 extern int thread_join(thread_t thread_handle, void **retval) {
