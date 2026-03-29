@@ -326,8 +326,8 @@ int thread_join(thread_t thread_handle, void **retval) {
     return -1;
   }
 
-  // Claim the thread BEFORE yielding so that free_zombies() (called from
-  // do_final_cleanup) will not free it under our feet.
+  // Claim the thread BEFORE yielding so that free_zombies() will not
+  // free it under our feet.
   target->joined = 1;
 
   // Wait for the target thread to terminate
@@ -342,9 +342,22 @@ int thread_join(thread_t thread_handle, void **retval) {
   // Free the stack and structure of the thread.
   // main_thread is statically allocated — never free it.
   if (target != &main_thread) {
-    // Remove from the zombie queue if it was added before we claimed it
+    // Remove from zombie queue only if it was added there.
+    // A thread is added to zombie_queue in thread_exit only if joined==0
+    // at that moment. Since we set joined=1 above, two cases exist:
+    //   1. target was already TERMINATED before we set joined=1
+    //      → it was added to zombie_queue → we must remove it
+    //   2. target was still RUNNING when we set joined=1
+    //      → thread_exit will see joined=1 and skip zombie_add → nothing to remove
     if (zombie_initialized) {
-      STAILQ_REMOVE(&zombie_queue, target, thread, entries);
+      thread *z;
+      int in_zombie = 0;
+      STAILQ_FOREACH(z, &zombie_queue, entries) {
+        if (z == target) { in_zombie = 1; break; }
+      }
+      if (in_zombie) {
+        STAILQ_REMOVE(&zombie_queue, target, thread, entries);
+      }
     }
     VALGRIND_STACK_DEREGISTER(target->valgrind_stack_id);
     void *map = (char *)target->context.uc_stack.ss_sp - GUARD_SIZE;
