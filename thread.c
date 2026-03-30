@@ -8,20 +8,12 @@
 #include <ucontext.h>
 #include <valgrind/valgrind.h>
 
-/* =========================================================================
- * Constants & thread states
- * ========================================================================= */
-
 #define STACK_SIZE (1024 * 1024)
 #define GUARD_SIZE 4096
 
 #define THREAD_READY      0
 #define THREAD_RUNNING    1
 #define THREAD_TERMINATED 2
-
-/* =========================================================================
- * Thread structure
- * ========================================================================= */
 
 typedef struct thread {
   int id;                       // Thread ID
@@ -35,10 +27,6 @@ typedef struct thread {
   unsigned valgrind_stack_id;   // Valgrind stack ID for memory checking
 } thread;
 
-/* =========================================================================
- * Scheduler state
- * ========================================================================= */
-
 // Queue of threads that are ready to run
 static struct thread_queue ready_queue;
 
@@ -49,7 +37,7 @@ static thread *current_thread        = &main_thread;
 static int     next_thread_id        = 1;
 static int     scheduler_initialized = 0;
 
-/* =========================================================================
+/*
  * Zombie queue — terminated threads not yet joined
  *
  * When a thread exits without being joined, we cannot free its stack
@@ -58,7 +46,7 @@ static int     scheduler_initialized = 0;
  *   - by free_zombies() when the program is about to exit, or
  *   - never freed by free_zombies() if thread_join() claimed it first
  *     (joined=1 is the synchronisation flag between the two paths).
- * ========================================================================= */
+*/
 
 static struct thread_queue zombie_queue;
 static int zombie_initialized = 0;
@@ -106,10 +94,10 @@ static void free_zombies(void) {
   }
 }
 
-/* =========================================================================
+/*
  * Cleanup stack — used to free the last zombie safely from a neutral stack
  * before calling exit(0), since we cannot free the stack we are running on.
- * ========================================================================= */
+*/
 
 static char       cleanup_stack[8192];
 static ucontext_t cleanup_ctx;
@@ -138,10 +126,6 @@ static void switch_to_cleanup(void) {
   exit(1);
 }
 
-/* =========================================================================
- * Internal helper — thread entry point
- * ========================================================================= */
-
 /*
  * thread_entry — entry point for every new thread.
  * Calls the user function then exits the thread when it returns.
@@ -150,10 +134,6 @@ static void thread_entry(void) {
   void *retval = current_thread->start_fun(current_thread->arg);
   thread_exit(retval);
 }
-
-/* =========================================================================
- * Public API — thread lifecycle
- * ========================================================================= */
 
 /*
  * thread_self — retrieves the identifier of the current thread.
@@ -367,10 +347,6 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   return 0;
 }
-
-/* =========================================================================
- * Public API — mutex
- * ========================================================================= */
 
 int thread_mutex_init(thread_mutex_t *mutex) {
   if (mutex == NULL) return -1;
