@@ -1,6 +1,7 @@
 CC = gcc
 CFLAGS  = -Wall -Wextra -g -fPIC
 LDFLAGS = -L. -lthread -lpthread
+PYTHON ?= python
 
 # Directories
 TEST_DIR = test
@@ -63,4 +64,7 @@ valgrind: all
 clean:
 	rm -rf *.o *.so bin $(INSTALL_DIR)
 
-.PHONY: all tests pthreads install valgrind clean
+bench-plot: all pthreads
+	$(PYTHON) scripts/benchmark_plot.py
+
+.PHONY: all tests pthreads install valgrind clean bench-plot bench-plot-quick
