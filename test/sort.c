@@ -85,12 +85,9 @@ int main() {
         array[i] = rand();
     }
 
-    // Prepare arguments for the initial thread
     SortArgs args = {array, temp, 0, ARRAY_SIZE};
     thread_t t;
     struct timeval start, end;
-
-    // Measure execution time
     gettimeofday(&start, NULL);
     thread_create(&t, mergesort_thread, &args);
     thread_join(t, NULL);
@@ -105,9 +102,14 @@ int main() {
         }
     }
 
-    long long elapsed = (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
+    long long elapsed_us = (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
     printf("Sorted: %s\n", sorted ? "yes" : "no");
-    printf("Execution time: %lld s\n", elapsed);
+    if (elapsed_us < 1000)
+        printf("Execution time: %lld us\n", elapsed_us);
+    else if (elapsed_us < 1000000)
+        printf("Execution time: %.3f ms\n", elapsed_us / 1000.0);
+    else
+        printf("Execution time: %.3f s\n", elapsed_us / 1000000.0);
 
     free(array);
     free(temp);

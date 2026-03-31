@@ -73,9 +73,14 @@ int main() {
     }
 
     gettimeofday(&end, NULL);
-    long long elapsed = (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
+    long long elapsed_us = (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
     printf("Matrix-matrix multiplication completed.\n");
-    printf("Execution time: %lld us\n", elapsed);
+    if (elapsed_us < 1000)
+        printf("Execution time: %lld us\n", elapsed_us);
+    else if (elapsed_us < 1000000)
+        printf("Execution time: %.3f ms\n", elapsed_us / 1000.0);
+    else
+        printf("Execution time: %.3f s\n", elapsed_us / 1000000.0);
 
     free(A);
     free(B);

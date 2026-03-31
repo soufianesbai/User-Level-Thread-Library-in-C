@@ -63,9 +63,9 @@ valgrind: all
 	done
 
 clean:
-	rm -rf *.o *.so bin $(INSTALL_DIR)
+	rm -rf *.o *.so bin $(INSTALL_DIR) bench
 
 graphs: all pthreads
-	$(PYTHON) scripts/benchmark_plot.py
+	$(PYTHON) scripts/benchmark_plot.py $(ARGS)
 
 .PHONY: all tests pthreads install valgrind clean graphs bench-plot bench-plot-quick

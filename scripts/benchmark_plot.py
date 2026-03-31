@@ -41,6 +41,10 @@ ALL_TESTS: list[TestCase] = [
     TestCase("62-mutex", ["10"]),
     TestCase("63-mutex-equity", []),
     TestCase("64-mutex-join", []),
+    TestCase("sum", []),
+    TestCase("sort", []),
+    TestCase("reduction", []),
+    TestCase("matrix_mul", []),
 ]
 
 
@@ -113,6 +117,7 @@ def plot(path: Path, tests: list[str], custom: list[float], pthread: list[float]
 
 
 def main() -> int:
+
     parser = argparse.ArgumentParser(description="Benchmark simple maison vs pthread")
     parser.add_argument("--repo", default=".")
     parser.add_argument("--runs", type=int, default=2)
@@ -120,6 +125,7 @@ def main() -> int:
     parser.add_argument("--csv", default="bench/results.csv")
     parser.add_argument("--png", default="bench/results.png")
     parser.add_argument("--skip-build", action="store_true")
+    parser.add_argument("--custom-tests", action="store_true", help="N'exécute que sum, sort, reduction, matrix_mul")
     args = parser.parse_args()
 
     if args.runs < 1:
@@ -140,14 +146,25 @@ def main() -> int:
     ld_path = env.get("LD_LIBRARY_PATH", "")
     env["LD_LIBRARY_PATH"] = str(repo) + ((":" + ld_path) if ld_path else "")
 
-    rows: list[dict[str, str]] = []
-    custom_times: dict[str, list[float]] = {t.name: [] for t in ALL_TESTS}
-    pthread_times: dict[str, list[float]] = {t.name: [] for t in ALL_TESTS}
+    # Sélection des tests à exécuter
+    if args.custom_tests:
+        selected_tests = [
+            TestCase("sum", []),
+            TestCase("sort", []),
+            TestCase("reduction", []),
+            TestCase("matrix_mul", []),
+        ]
+    else:
+        selected_tests = ALL_TESTS
 
-    total = len(ALL_TESTS) * args.runs * 2
+    rows: list[dict[str, str]] = []
+    custom_times: dict[str, list[float]] = {t.name: [] for t in selected_tests}
+    pthread_times: dict[str, list[float]] = {t.name: [] for t in selected_tests}
+
+    total = len(selected_tests) * args.runs * 2
     done = 0
 
-    for test in ALL_TESTS:
+    for test in selected_tests:
         for run_id in range(1, args.runs + 1):
             for impl, exe in [
                 ("custom", bin_dir / test.name),
@@ -180,7 +197,7 @@ def main() -> int:
     png_path = (repo / args.png).resolve()
     write_csv(csv_path, rows)
 
-    test_names = [t.name for t in ALL_TESTS]
+    test_names = [t.name for t in selected_tests]
     y_custom = [median_or_nan(custom_times[n]) for n in test_names]
     y_pthread = [median_or_nan(pthread_times[n]) for n in test_names]
     plot(png_path, test_names, y_custom, y_pthread)
