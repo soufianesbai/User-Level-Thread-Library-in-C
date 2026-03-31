@@ -8,3 +8,5 @@ thread
 .vscode/
 
 my_files/
+
+bench/

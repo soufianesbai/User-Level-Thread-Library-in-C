@@ -22,7 +22,7 @@ class TestCase:
     timeout_s: int = 20
 
 
-# Liste des tests benchmark (71 et 81 ignores volontairement).
+# Liste des tests benchmark.
 ALL_TESTS: list[TestCase] = [
     TestCase("01-main", []),
     TestCase("02-switch", []),
@@ -186,10 +186,9 @@ def main() -> int:
     plot(png_path, test_names, y_custom, y_pthread)
 
     ok_count = sum(1 for r in rows if r["ok"] == "1")
-    print(f"CSV genere: {csv_path}")
-    print(f"Graphe genere: {png_path}")
+    print(f"CSV : {csv_path}")
+    print(f"Graphe : {png_path}")
     print(f"Executions reussies: {ok_count}/{total}")
-    print("(test ignorer : 71 et le 81)")
     return 0
 
 

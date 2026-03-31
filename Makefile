@@ -1,3 +1,4 @@
+PYTHON=python3
 CC = gcc
 CFLAGS  = -Wall -Wextra -g -fPIC
 LDFLAGS = -L. -lthread -lpthread
@@ -64,7 +65,7 @@ valgrind: all
 clean:
 	rm -rf *.o *.so bin $(INSTALL_DIR)
 
-bench-plot: all pthreads
+graphs: all pthreads
 	$(PYTHON) scripts/benchmark_plot.py
 
-.PHONY: all tests pthreads install valgrind clean bench-plot bench-plot-quick
+.PHONY: all tests pthreads install valgrind clean graphs bench-plot bench-plot-quick
