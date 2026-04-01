@@ -294,6 +294,9 @@ int thread_join(thread_t thread_handle, void **retval) {
     prev->state = THREAD_READY;
     TAILQ_INSERT_HEAD(&ready_queue, prev, entries); // Ensure the target thread is in the ready queue + will be the first to run
     TAILQ_REMOVE(&ready_queue, target, entries); // Remove the target thread from the ready queue
+
+    current_thread = target;
+    target->state = THREAD_RUNNING;
     swapcontext(&prev->context, &target->context); // Switch to the target thread's context
   }
 
