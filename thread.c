@@ -6,6 +6,7 @@
 #include <sys/mman.h>
 #include <sys/queue.h>
 #include <ucontext.h>
+#include <assert.h>
 #include <valgrind/valgrind.h>
 
 #define STACK_SIZE (1024 * 1024)
@@ -14,16 +15,16 @@
 #define THREAD_READY      0
 #define THREAD_RUNNING    1
 #define THREAD_TERMINATED 2
+#define THREAD_BLOCKED    3
 
 typedef struct thread {
   int id;                       // Thread ID
   ucontext_t context;           // Context for the thread
   void *(*start_fun)(void *);   // Function pointer for the thread's start routine
   void *arg;                    // Argument to pass to the start routine
-  STAILQ_ENTRY(thread) entries; // Queue entries (ready queue or zombie queue)
-  int state;                    // Thread state: READY, RUNNING, TERMINATED
+  TAILQ_ENTRY(thread) entries;  // Queue entries (ready queue, zombie queue, or mutex waiting queue)
+  int state;                    // Thread state: READY, RUNNING, TERMINATED, BLOCKED
   void *retval;                 // Return value from the thread
-  int joined;                   // 1 if thread_join() has claimed this thread
   unsigned valgrind_stack_id;   // Valgrind stack ID for memory checking
 } thread;
 
@@ -38,67 +39,59 @@ static int     next_thread_id        = 1;
 static int     scheduler_initialized = 0;
 
 /*
- * Zombie queue — terminated threads not yet joined
+ * Zombie queue — terminated threads not yet joined.
  *
- * When a thread exits without being joined, we cannot free its stack
- * immediately (we are still running on it). Instead we place it in this
- * queue. It will be freed either:
- *   - by free_zombies() when the program is about to exit, or
- *   - never freed by free_zombies() if thread_join() claimed it first
- *     (joined=1 is the synchronisation flag between the two paths).
-*/
-
+ * A thread that exits with and not yet joined cannot be freed immediately: a future
+ * thread_join() call must still be able to read its retval. We place it here
+ * so it survives until thread_join() claims it or until
+ * free_zombies() cleans it up at program exit.
+ */
 static struct thread_queue zombie_queue;
 static int zombie_initialized = 0;
 
 /*
- * zombie_init — lazily initialises the zombie queue on first use.
+ * zombie_init — initialises the zombie queue on first use.
  */
 static void zombie_init(void) {
   if (!zombie_initialized) {
-    STAILQ_INIT(&zombie_queue);
+    TAILQ_INIT(&zombie_queue);
     zombie_initialized = 1;
   }
 }
 
 /*
  * zombie_add — adds a terminated, unjoined thread to the zombie queue.
- * Must only be called for non-main threads with joined == 0.
+ * Must only be called for non-main threads not yet joined.
  */
 static void zombie_add(thread *t) {
+  assert(t != &main_thread);
   zombie_init();
-  STAILQ_INSERT_TAIL(&zombie_queue, t, entries);
+  TAILQ_INSERT_TAIL(&zombie_queue, t, entries);
 }
 
 /*
  * free_zombies — frees every zombie that has not been claimed by thread_join.
- * Safe to call at any time from any stack, because we never free the
- * current thread here (it is RUNNING, not TERMINATED).
  */
 static void free_zombies(void) {
-  if (!zombie_initialized) return;
+  assert(zombie_initialized);
 
-  thread *t = STAILQ_FIRST(&zombie_queue);
+  thread *t = TAILQ_FIRST(&zombie_queue);
   while (t != NULL) {
-    thread *next = STAILQ_NEXT(t, entries);
-    if (t->joined == 0) {
-      // Nobody joined this thread — free it now
-      STAILQ_REMOVE(&zombie_queue, t, thread, entries);
-      VALGRIND_STACK_DEREGISTER(t->valgrind_stack_id);
-      void *map = (char *)t->context.uc_stack.ss_sp - GUARD_SIZE;
-      munmap(map, STACK_SIZE + GUARD_SIZE);
-      free(t);
-    }
-    // If joined == 1, thread_join() already freed it or will do so — skip
+    thread *next = TAILQ_NEXT(t, entries);
+    TAILQ_REMOVE(&zombie_queue, t, entries);
+    VALGRIND_STACK_DEREGISTER(t->valgrind_stack_id);
+    void *map = (char *)t->context.uc_stack.ss_sp - GUARD_SIZE;
+    munmap(map, STACK_SIZE + GUARD_SIZE);
+    free(t);
+
     t = next;
   }
 }
 
 /*
- * Cleanup stack — used to free the last zombie safely from a neutral stack
+ * Cleanup stack — used to free zombies safely from a neutral stack
  * before calling exit(0), since we cannot free the stack we are running on.
-*/
-
+ */
 static char       cleanup_stack[8192];
 static ucontext_t cleanup_ctx;
 
@@ -138,7 +131,9 @@ static void thread_entry(void) {
 /*
  * thread_self — retrieves the identifier of the current thread.
  */
-thread_t thread_self(void) { return (thread_t)current_thread; }
+thread_t thread_self(void) { 
+  return (thread_t)current_thread; 
+}
 
 /*
  * thread_create — creates a new thread that will execute func(funcarg).
@@ -146,7 +141,8 @@ thread_t thread_self(void) { return (thread_t)current_thread; }
  */
 int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   if (!scheduler_initialized) {
-    STAILQ_INIT(&ready_queue);
+    TAILQ_INIT(&ready_queue);
+    // Initialize the main thread's context so it can be switched to like any other thread.
     if (getcontext(&main_thread.context) == -1) {
       return -1;
     }
@@ -174,18 +170,18 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     return -1;
   }
 
+  // Protect the guard page to catch stack overflows
   if (mprotect(map, GUARD_SIZE, PROT_NONE) == -1) {
     munmap(map, STACK_SIZE + GUARD_SIZE);
     free(newth);
     return -1;
   }
 
-  newth->id        = next_thread_id++;
-  newth->start_fun = func;
-  newth->arg       = funcarg;
-  newth->state     = THREAD_READY;
-  newth->joined    = 0;
-  newth->retval    = NULL;
+  newth->id             = next_thread_id++;
+  newth->start_fun      = func;
+  newth->arg            = funcarg;
+  newth->state          = THREAD_READY;
+  newth->retval         = NULL;
 
   if (getcontext(&newth->context) == -1) {
     munmap(map, STACK_SIZE + GUARD_SIZE);
@@ -193,17 +189,17 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     return -1;
   }
 
-  void *stack_base = (char *)map + GUARD_SIZE;
-  newth->context.uc_stack.ss_sp    = stack_base;
+  void *stack = (char *)map + GUARD_SIZE;
+  newth->context.uc_stack.ss_sp    = stack;
   newth->context.uc_stack.ss_size  = STACK_SIZE;
   newth->context.uc_stack.ss_flags = 0;
   newth->context.uc_link           = NULL;
   makecontext(&newth->context, thread_entry, 0);
 
   newth->valgrind_stack_id = VALGRIND_STACK_REGISTER(
-      stack_base, (char *)stack_base + STACK_SIZE);
+      stack, (char *)stack + STACK_SIZE);
 
-  STAILQ_INSERT_TAIL(&ready_queue, newth, entries);
+  TAILQ_INSERT_TAIL(&ready_queue, newth, entries);
   *newthread = (thread_t)newth;
 
   return 0;
@@ -214,7 +210,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
  * If no other thread is ready, returns immediately.
  */
 int thread_yield(void) {
-  thread *next = STAILQ_FIRST(&ready_queue);
+  thread *next = TAILQ_FIRST(&ready_queue);
   if (!next) {
     // No other thread is ready to run, so we just return and continue
     // executing the current thread.
@@ -222,11 +218,11 @@ int thread_yield(void) {
   }
 
   thread *prev = current_thread;
-  STAILQ_REMOVE_HEAD(&ready_queue, entries); // Remove the next thread from the ready queue
+  TAILQ_REMOVE(&ready_queue, next, entries);
 
   if (prev->state == THREAD_RUNNING) {
     prev->state = THREAD_READY;
-    STAILQ_INSERT_TAIL(&ready_queue, prev, entries); // Put the current thread back in the ready queue
+    TAILQ_INSERT_TAIL(&ready_queue, prev, entries); // Put the current thread back in the ready queue
   }
 
   current_thread = next;
@@ -241,47 +237,40 @@ int thread_yield(void) {
  * This function never returns.
  *
  * Memory management strategy:
- *   - We cannot free our own stack while running on it.
- *   - If the thread was not joined, we add it to the zombie queue.
- *     free_zombies() will clean it up later (at program exit), unless
- *     thread_join() claims it first (joined=1 prevents the free).
- *   - If this is the last thread, we switch to a neutral cleanup_stack
- *     before calling free_zombies() + exit(0).
+ *   - not yet joined at exit time: a future thread_join() may still need retval.
+ *     We add to the zombie queue so the struct survives
+ *     until thread_join() claims it or free_zombies() cleans it at program exit.
+ *   - Last thread standing: switch to the neutral cleanup_stack so that
+ *     do_final_cleanup() can safely free any remaining zombies.
  */
 void thread_exit(void *retval) {
   current_thread->retval = retval;
   current_thread->state  = THREAD_TERMINATED;
 
   thread *dying = current_thread;
-
-  // If nobody joined this thread, add it to the zombie queue for later cleanup.
-  // joined == 0 here means thread_join() has not claimed it yet.
-  // thread_join() sets joined = 1 before doing anything else, so this flag
-  // is the safe synchronisation point between the two code paths.
-  if (dying != &main_thread && dying->joined == 0) {
-    zombie_add(dying);
-  }
-
-  // Find the next thread to run
-  thread *next = STAILQ_FIRST(&ready_queue);
+  thread *next  = TAILQ_FIRST(&ready_queue);
 
   if (!next) {
-    // No other thread is ready to run — we are the last one.
-    // Switch to the neutral cleanup_stack so we can safely free all zombies
-    // (including possibly ourselves) without touching a dead stack.
+    // Last thread standing — switch to cleanup_stack to free zombies safely
+    if (dying != &main_thread) {
+      zombie_add(dying);
+    }
     switch_to_cleanup();
-    // unreachable
   }
 
   // Remove the next thread from the ready queue and switch to it
-  STAILQ_REMOVE_HEAD(&ready_queue, entries);
+  TAILQ_REMOVE(&ready_queue, next, entries); 
   current_thread = next;
-  next->state    = THREAD_RUNNING;
+  current_thread->state    = THREAD_RUNNING;
 
-  // Switch to the next thread's context. Since the current thread is
+  if (dying != &main_thread) {
+    zombie_add(dying);
+  }
+
+  // Switch to the current_thread thread's context. Since the current thread is
   // terminating, we use setcontext instead of swapcontext (no need to
   // save the dying thread's context — we will never return to it).
-  setcontext(&next->context);
+  setcontext(&current_thread->context);
 
   // If setcontext returns, it failed. Exit with error.
   exit(1);
@@ -300,16 +289,6 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   thread *target = (thread *)thread_handle;
 
-  // Protection against double-join
-  if (target->joined) {
-    errno = EINVAL;
-    return -1;
-  }
-
-  // Claim the thread BEFORE yielding so that free_zombies() will not
-  // free it under our feet.
-  target->joined = 1;
-
   // Wait for the target thread to terminate
   while (target->state != THREAD_TERMINATED) {
     thread_yield();
@@ -322,23 +301,7 @@ int thread_join(thread_t thread_handle, void **retval) {
   // Free the stack and structure of the thread.
   // main_thread is statically allocated — never free it.
   if (target != &main_thread) {
-    // Remove from zombie queue only if it was added there.
-    // A thread is added to zombie_queue in thread_exit only if joined==0
-    // at that moment. Since we set joined=1 above, two cases exist:
-    //   1. target was already TERMINATED before we set joined=1
-    //      → it was added to zombie_queue → we must remove it
-    //   2. target was still RUNNING when we set joined=1
-    //      → thread_exit will see joined=1 and skip zombie_add → nothing to remove
-    if (zombie_initialized) {
-      thread *z;
-      int in_zombie = 0;
-      STAILQ_FOREACH(z, &zombie_queue, entries) {
-        if (z == target) { in_zombie = 1; break; }
-      }
-      if (in_zombie) {
-        STAILQ_REMOVE(&zombie_queue, target, thread, entries);
-      }
-    }
+    TAILQ_REMOVE(&zombie_queue, target, entries);
     VALGRIND_STACK_DEREGISTER(target->valgrind_stack_id);
     void *map = (char *)target->context.uc_stack.ss_sp - GUARD_SIZE;
     munmap(map, STACK_SIZE + GUARD_SIZE);
@@ -351,48 +314,79 @@ int thread_join(thread_t thread_handle, void **retval) {
 int thread_mutex_init(thread_mutex_t *mutex) {
   if (mutex == NULL) return -1;
   mutex->locked = 0;
-  STAILQ_INIT(&mutex->waiting_queue);
+  TAILQ_INIT(&mutex->waiting_queue);
   return 0;
 }
 
 int thread_mutex_destroy(thread_mutex_t *mutex) {
-  if (mutex == NULL || !STAILQ_EMPTY(&mutex->waiting_queue)) {
+  if (mutex == NULL || !TAILQ_EMPTY(&mutex->waiting_queue)) {
     // Do not destroy a mutex if threads are still waiting on it
     return -1;
   }
   return 0;
 }
 
+/*
+ * thread_mutex_lock — acquires the mutex.
+ *
+ * If the mutex is free: acquire it directly in O(1).
+ * If the mutex is locked: park the current thread in the mutex waiting queue
+ * (state = BLOCKED, not put back in ready_queue). Ownership is transferred
+ * directly by thread_mutex_unlock(), so we return here already owning the mutex.
+ */
 int thread_mutex_lock(thread_mutex_t *mutex) {
   if (mutex == NULL) return -1;
 
-  while (mutex->locked) {
-    thread *prev = current_thread;
-    thread *next = STAILQ_FIRST(&ready_queue);
-    if (next == NULL) {
-      // No other thread can unlock the mutex — deadlock
-      return -1;
-    }
-    // Park the current thread in the mutex waiting queue
-    STAILQ_REMOVE_HEAD(&ready_queue, entries);
-    STAILQ_INSERT_TAIL(&mutex->waiting_queue, prev, entries);
-    current_thread = next;
-    next->state    = THREAD_RUNNING;
-    swapcontext(&prev->context, &next->context);
+  if (!mutex->locked) {
+    // Fast path: mutex is free, acquire it immediately
+    mutex->locked = 1;
+    return 0;
   }
-  mutex->locked = 1;
+
+  // Slow path: park current thread in waiting queue until unlock() wakes us.
+  // We will return here with the mutex already owned (locked stays 1).
+  thread *prev = current_thread;
+  thread *next = TAILQ_FIRST(&ready_queue);
+  if (next == NULL) {
+    // No other thread can unlock the mutex — deadlock
+    return -1;
+  }
+
+  TAILQ_REMOVE(&ready_queue, next, entries); // O(1) — TAILQ knows the predecessor via tqe_prev
+
+  // Park current thread: BLOCKED state means thread_yield() won't pick it up
+  prev->state = THREAD_BLOCKED;
+  TAILQ_INSERT_TAIL(&mutex->waiting_queue, prev, entries);
+
+  current_thread = next;
+  next->state    = THREAD_RUNNING;
+  swapcontext(&prev->context, &next->context);
+
+  // When we return here, unlock() has transferred ownership to us.
+  // mutex->locked is still 1 — we are the new owner.
   return 0;
 }
 
+/*
+ * thread_mutex_unlock — releases the mutex.
+ *
+ * If threads are waiting: transfer ownership directly to the first waiter
+ * (locked stays 1, no window where another thread could steal the mutex).
+ * Otherwise: release the mutex (locked = 0).
+ */
 int thread_mutex_unlock(thread_mutex_t *mutex) {
   if (mutex == NULL) return -1;
-  mutex->locked = 0;
-  // Wake up the first thread waiting on this mutex, if any
-  if (!STAILQ_EMPTY(&mutex->waiting_queue)) {
-    thread *revived = STAILQ_FIRST(&mutex->waiting_queue);
-    STAILQ_REMOVE_HEAD(&mutex->waiting_queue, entries);
+
+  if (!TAILQ_EMPTY(&mutex->waiting_queue)) {
+    // Transfer ownership directly: the revived thread becomes the new owner.
+    // locked stays 1 — no window where another thread could steal the mutex.
+    thread *revived = TAILQ_FIRST(&mutex->waiting_queue);
+    TAILQ_REMOVE(&mutex->waiting_queue, revived, entries); // O(1) — TAILQ knows the predecessor via tqe_prev
     revived->state = THREAD_READY;
-    STAILQ_INSERT_TAIL(&ready_queue, revived, entries);
+    TAILQ_INSERT_TAIL(&ready_queue, revived, entries);
+    // locked intentionally stays at 1
+  } else {
+    mutex->locked = 0;
   }
   return 0;
 }

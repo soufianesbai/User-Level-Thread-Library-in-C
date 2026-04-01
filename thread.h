@@ -5,7 +5,7 @@
 
 #include <sys/queue.h>
 
-STAILQ_HEAD(thread_queue, thread);  
+TAILQ_HEAD(thread_queue, thread);
 
 /* identifiant de thread
  * NB: pourra être un entier au lieu d'un pointeur si ca vous arrange,
@@ -45,7 +45,7 @@ extern int thread_join(thread_t thread, void **retval);
 extern void thread_exit(void *retval) __attribute__((__noreturn__));
 
 typedef struct thread_mutex {
-    int locked;                         // 0 = libre, 1 = occupé
+    int locked;                         // 0 = free, 1 = occupied
     struct thread_queue waiting_queue;  // Queue of threads waiting for the mutex
 } thread_mutex_t;
 
