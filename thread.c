@@ -289,7 +289,7 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   thread *target = (thread *)thread_handle;
 
-  if(target->state != THREAD_TERMINATED){
+  while(target->state != THREAD_TERMINATED){
     thread *prev = current_thread;
     prev->state = THREAD_READY;
     TAILQ_INSERT_HEAD(&ready_queue, prev, entries); // Ensure the target thread is in the ready queue + will be the first to run
