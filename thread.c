@@ -289,15 +289,15 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   thread *target = (thread *)thread_handle;
 
-  while(target->state != THREAD_TERMINATED){
-    thread *prev = current_thread;
-    prev->state = THREAD_READY;
-    TAILQ_INSERT_HEAD(&ready_queue, prev, entries); // Ensure the target thread is in the ready queue + will be the first to run
-    TAILQ_REMOVE(&ready_queue, target, entries); // Remove the target thread from the ready queue
-    swapcontext(&prev->context, &target->context); // Switch to the target thread's context
+  if (target == current_thread) {
+    errno = EDEADLK;
+    return -1;
   }
 
-  assert(target->state == THREAD_TERMINATED);
+  // Wait for the target thread to terminate
+  while (target->state != THREAD_TERMINATED) {
+    thread_yield();
+  }
 
   if (retval != NULL) {
     *retval = target->retval;
