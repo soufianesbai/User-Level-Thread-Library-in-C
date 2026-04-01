@@ -27,6 +27,8 @@ typedef struct thread {
   int state;    // Thread state: READY, RUNNING, TERMINATED, BLOCKED
   void *retval; // Return value from the thread
   unsigned valgrind_stack_id; // Valgrind stack ID for memory checking
+  void *stack_map;            // Mapped memory for stack (for reuse in pool)
+  struct thread_queue join_queue; // Threads waiting to join this one
 } thread;
 
 // Queue of threads that are ready to run
@@ -39,6 +41,20 @@ static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
 
+/* Stack pool — reuse allocated stacks to avoid mmap/munmap overhead
+ * Each entry holds a pre-allocated stack that can be reused by new threads.
+ */
+struct stack_entry {
+  void *map;  // Mapped memory region (includes guard page)
+  void *stack; // Usable stack pointer (after guard page)
+  unsigned valgrind_id;
+};
+
+static struct stack_entry *stack_pool = NULL;
+static int stack_pool_size = 0;
+static int stack_pool_cap = 0;
+static const int MAX_POOLED_STACKS = 64; // Prevent unbounded pool growth
+
 /*
  * Zombie queue — terminated threads not yet joined.
  *
@@ -49,6 +65,79 @@ static int scheduler_initialized = 0;
  */
 static struct thread_queue zombie_queue;
 static int zombie_initialized = 0;
+
+/*
+ * stack_pool_alloc — pop a stack from the pool, or allocate a fresh one.
+ */
+static int stack_pool_alloc(struct stack_entry *entry) {
+  if (stack_pool_size > 0) {
+    // Reuse a stack from the pool
+    *entry = stack_pool[--stack_pool_size];
+    return 0;
+  }
+
+  // Allocate a fresh stack with guard page
+  void *map = mmap(NULL, STACK_SIZE + GUARD_SIZE, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
+  if (map == MAP_FAILED) {
+    return -1;
+  }
+
+  if (mprotect(map, GUARD_SIZE, PROT_NONE) == -1) {
+    munmap(map, STACK_SIZE + GUARD_SIZE);
+    return -1;
+  }
+
+  void *stack = (char *)map + GUARD_SIZE;
+  entry->map = map;
+  entry->stack = stack;
+  entry->valgrind_id =
+      VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
+  return 0;
+}
+
+/*
+ * stack_pool_push — return a stack to the pool for reuse.
+ */
+static void stack_pool_push(struct stack_entry *entry) {
+  if (stack_pool_size >= MAX_POOLED_STACKS) {
+    // Pool is full; free the stack immediately
+    VALGRIND_STACK_DEREGISTER(entry->valgrind_id);
+    munmap(entry->map, STACK_SIZE + GUARD_SIZE);
+    return;
+  }
+
+  if (stack_pool_size >= stack_pool_cap) {
+    // Grow the pool array
+    int new_cap = (stack_pool_cap == 0) ? 8 : stack_pool_cap * 2;
+    if (new_cap > MAX_POOLED_STACKS) new_cap = MAX_POOLED_STACKS;
+    struct stack_entry *new_pool = realloc(stack_pool, sizeof(*new_pool) * new_cap);
+    if (new_pool == NULL) {
+      // Realloc failed; free the stack instead
+      VALGRIND_STACK_DEREGISTER(entry->valgrind_id);
+      munmap(entry->map, STACK_SIZE + GUARD_SIZE);
+      return;
+    }
+    stack_pool = new_pool;
+    stack_pool_cap = new_cap;
+  }
+
+  stack_pool[stack_pool_size++] = *entry;
+}
+
+/*
+ * stack_pool_free_all — drain the pool at program exit.
+ */
+static void stack_pool_free_all(void) {
+  for (int i = 0; i < stack_pool_size; ++i) {
+    VALGRIND_STACK_DEREGISTER(stack_pool[i].valgrind_id);
+    munmap(stack_pool[i].map, STACK_SIZE + GUARD_SIZE);
+  }
+  free(stack_pool);
+  stack_pool = NULL;
+  stack_pool_size = 0;
+  stack_pool_cap = 0;
+}
 
 /*
  * zombie_init — initialises the zombie queue on first use.
@@ -72,6 +161,7 @@ static void zombie_add(thread *t) {
 
 /*
  * free_zombies — frees every zombie that has not been claimed by thread_join.
+ * Also returns any pooled stacks to the pool for reuse.
  */
 static void free_zombies(void) {
   assert(zombie_initialized);
@@ -80,11 +170,17 @@ static void free_zombies(void) {
   while (t != NULL) {
     thread *next = TAILQ_NEXT(t, entries);
     TAILQ_REMOVE(&zombie_queue, t, entries);
-    VALGRIND_STACK_DEREGISTER(t->valgrind_stack_id);
-    void *map = (char *)t->context.uc_stack.ss_sp - GUARD_SIZE;
-    munmap(map, STACK_SIZE + GUARD_SIZE);
-    free(t);
 
+    // Return stack to the pool if it was allocated dynamically
+    if (t->stack_map != NULL) {
+      struct stack_entry entry = {
+          .map = t->stack_map,
+          .stack = t->context.uc_stack.ss_sp,
+          .valgrind_id = t->valgrind_stack_id};
+      stack_pool_push(&entry);
+    }
+
+    free(t);
     t = next;
   }
 }
@@ -102,6 +198,7 @@ static ucontext_t cleanup_ctx;
  */
 static void do_final_cleanup(void) {
   free_zombies();
+  stack_pool_free_all();
   exit(0);
 }
 
@@ -141,6 +238,7 @@ thread_t thread_self(void) { return (thread_t)current_thread; }
 int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   if (!scheduler_initialized) {
     TAILQ_INIT(&ready_queue);
+    TAILQ_INIT(&main_thread.join_queue);
     // Initialize the main thread's context so it can be switched to like any
     // other thread.
     if (getcontext(&main_thread.context) == -1) {
@@ -160,18 +258,11 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     return -1;
   }
 
-  // Allocate the stack with a guard page at the bottom to catch overflows
-  void *map = mmap(NULL, STACK_SIZE + GUARD_SIZE, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
-  if (map == MAP_FAILED) {
+  // Allocate or reuse stack from pool
+  struct stack_entry stack_entry;
+  if (stack_pool_alloc(&stack_entry) == -1) {
     free(newth);
-    return -1;
-  }
-
-  // Protect the guard page to catch stack overflows
-  if (mprotect(map, GUARD_SIZE, PROT_NONE) == -1) {
-    munmap(map, STACK_SIZE + GUARD_SIZE);
-    free(newth);
+    errno = ENOMEM;
     return -1;
   }
 
@@ -180,22 +271,21 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->arg = funcarg;
   newth->state = THREAD_READY;
   newth->retval = NULL;
+  newth->stack_map = stack_entry.map;
+  newth->valgrind_stack_id = stack_entry.valgrind_id;
+  TAILQ_INIT(&newth->join_queue);
 
   if (getcontext(&newth->context) == -1) {
-    munmap(map, STACK_SIZE + GUARD_SIZE);
     free(newth);
+    stack_pool_push(&stack_entry);
     return -1;
   }
 
-  void *stack = (char *)map + GUARD_SIZE;
-  newth->context.uc_stack.ss_sp = stack;
+  newth->context.uc_stack.ss_sp = stack_entry.stack;
   newth->context.uc_stack.ss_size = STACK_SIZE;
   newth->context.uc_stack.ss_flags = 0;
   newth->context.uc_link = NULL;
   makecontext(&newth->context, thread_entry, 0);
-
-  newth->valgrind_stack_id =
-      VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
 
   TAILQ_INSERT_TAIL(&ready_queue, newth, entries);
   *newthread = (thread_t)newth;
@@ -248,6 +338,16 @@ void thread_exit(void *retval) {
   current_thread->state = THREAD_TERMINATED;
 
   thread *dying = current_thread;
+
+  // Wake up all threads waiting to join this one
+  struct thread_queue *jq = &dying->join_queue;
+  thread *joiner;
+  while ((joiner = TAILQ_FIRST(jq)) != NULL) {
+    TAILQ_REMOVE(jq, joiner, entries);
+    joiner->state = THREAD_READY;
+    TAILQ_INSERT_TAIL(&ready_queue, joiner, entries);
+  }
+
   thread *next = TAILQ_FIRST(&ready_queue);
 
   if (!next) {
@@ -289,33 +389,55 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   thread *target = (thread *)thread_handle;
 
-  // while(target->state != THREAD_TERMINATED){
-  //   thread *prev = current_thread;
-  //   prev->state = THREAD_READY;
-  //   TAILQ_INSERT_HEAD(&ready_queue, prev, entries); // Ensure the target thread is in the ready queue + will be the first to run
-  //   TAILQ_REMOVE(&ready_queue, target, entries); // Remove the target thread from the ready queue
-
-  //   current_thread = target;
-  //   target->state = THREAD_RUNNING;
-  //   swapcontext(&prev->context, &target->context); // Switch to the target thread's context
-  // }
-
-  // Wait for the target thread to terminate
-  while (target->state != THREAD_TERMINATED) {
-    thread_yield();
+  // If the target is already terminated, process it immediately
+  if (target->state == THREAD_TERMINATED) {
+    goto cleanup;
   }
 
+  // Target is still running: block the current thread in the target's join queue
+  thread *joiner = current_thread;
+  struct thread_queue *jq = &target->join_queue;
+
+  // Add joiner to target's join queue
+  joiner->state = THREAD_BLOCKED;
+  TAILQ_INSERT_TAIL(jq, joiner, entries);
+
+  // Pick the next thread to run
+  thread *next = TAILQ_FIRST(&ready_queue);
+  if (next == NULL) {
+    // No other thread is ready; target must finish or we deadlock
+    // This is an error, so remove ourselves and fail
+    TAILQ_REMOVE(jq, joiner, entries);
+    joiner->state = THREAD_RUNNING;
+    errno = EDEADLK;
+    return -1;
+  }
+
+  // Switch to the next thread
+  TAILQ_REMOVE(&ready_queue, next, entries);
+  current_thread = next;
+  next->state = THREAD_RUNNING;
+
+  swapcontext(&joiner->context, &next->context);
+
+  // When we return here, we've been woken up by target's thread_exit
+
+cleanup:
   if (retval != NULL) {
     *retval = target->retval;
   }
 
-  // Free the stack and structure of the thread.
-  // main_thread is statically allocated — never free it.
+  // Claim the zombie and return its stack to the pool
   if (target != &main_thread) {
     TAILQ_REMOVE(&zombie_queue, target, entries);
-    VALGRIND_STACK_DEREGISTER(target->valgrind_stack_id);
-    void *map = (char *)target->context.uc_stack.ss_sp - GUARD_SIZE;
-    munmap(map, STACK_SIZE + GUARD_SIZE);
+    // Return stack to the pool
+    if (target->stack_map != NULL) {
+      struct stack_entry entry = {
+          .map = target->stack_map,
+          .stack = target->context.uc_stack.ss_sp,
+          .valgrind_id = target->valgrind_stack_id};
+      stack_pool_push(&entry);
+    }
     free(target);
   }
 
