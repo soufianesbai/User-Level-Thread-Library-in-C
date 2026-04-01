@@ -300,7 +300,10 @@ int thread_join(thread_t thread_handle, void **retval) {
     swapcontext(&prev->context, &target->context); // Switch to the target thread's context
   }
 
-  assert(target->state == THREAD_TERMINATED);
+  // Wait for the target thread to terminate
+  while (target->state != THREAD_TERMINATED) {
+    thread_yield();
+  }
 
   if (retval != NULL) {
     *retval = target->retval;
@@ -387,8 +390,11 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
  * Otherwise: release the mutex (locked = 0).
  */
 int thread_mutex_unlock(thread_mutex_t *mutex) {
-  if (mutex == NULL)
+  if (mutex == NULL) return -1;
+  if (!mutex->locked) {
+    // Cannot unlock a mutex that is not locked
     return -1;
+  }
 
   if (!TAILQ_EMPTY(&mutex->waiting_queue)) {
     // Transfer ownership directly: the revived thread becomes the new owner.
