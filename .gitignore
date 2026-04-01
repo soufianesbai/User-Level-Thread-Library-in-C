@@ -10,3 +10,8 @@ thread
 my_files/
 
 bench/
+
+build/*
+install/*
+bin/*
+

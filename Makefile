@@ -1,5 +1,6 @@
 PYTHON=python3
 CC = gcc
+CLANG ?= clang
 CFLAGS  = -Wall -Wextra -g -fPIC
 LDFLAGS = -L. -lthread -lpthread
 PYTHON ?= python
@@ -45,6 +46,10 @@ pthreads:
 		$(CC) $(CFLAGS) -DUSE_PTHREAD -I. $(TEST_DIR)/$$t.c -o bin/$$t-pthread -lpthread; \
 	done
 
+clang:
+	$(MAKE) CC=$(CLANG) all
+	$(MAKE) CC=$(CLANG) pthreads
+
 # --- Installation ---
 
 install: all pthreads
@@ -68,4 +73,4 @@ clean:
 graphs: all pthreads
 	$(PYTHON) scripts/benchmark_plot.py $(ARGS)
 
-.PHONY: all tests pthreads install valgrind clean graphs bench-plot bench-plot-quick
+.PHONY: all tests pthreads clang install valgrind clean graphs bench-plot bench-plot-quick
