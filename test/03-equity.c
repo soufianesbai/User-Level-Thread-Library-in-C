@@ -1,7 +1,7 @@
+#include "../thread.h"
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <assert.h>
-#include "../thread.h"
 
 /* test de l'équité de la cooperation via des thread_yield().
  *
@@ -19,11 +19,10 @@ static unsigned v[3];
 static int fini = 0;
 static double score = 0;
 
-static void * thfunc(void *arg)
-{
-  unsigned long myid = (unsigned long) arg;
+static void *thfunc(void *arg) {
+  unsigned long myid = (unsigned long)arg;
   int err, i;
-  for(i=0; i<1000 && !fini; i++) {
+  for (i = 0; i < 1000 && !fini; i++) {
     err = thread_yield();
     assert(!err);
     v[myid]++;
@@ -31,7 +30,7 @@ static void * thfunc(void *arg)
       fini = 1;
       printf("le thread %lu a terminé\n", myid);
       printf("nombres de yield: %u %u %u\n", v[0], v[1], v[2]);
-      score = (v[0]+v[1]+v[2]) / 3000.;
+      score = (v[0] + v[1] + v[2]) / 3000.;
       printf("score: %lf\n", score);
     }
   }
@@ -39,28 +38,26 @@ static void * thfunc(void *arg)
   return NULL;
 }
 
-int main()
-{
+int main() {
   thread_t th1, th2;
   int err;
 
   v[0] = v[1] = v[2] = 0;
-  err = thread_create(&th1, thfunc, (void*)0UL);
+  err = thread_create(&th1, thfunc, (void *)0UL);
   assert(!err);
-  err = thread_create(&th2, thfunc, (void*)1UL);
+  err = thread_create(&th2, thfunc, (void *)1UL);
   assert(!err);
 
-  thfunc((void*)2UL);
+  thfunc((void *)2UL);
 
   err = thread_join(th2, NULL);
   assert(!err);
   err = thread_join(th1, NULL);
   assert(!err);
 
-  if ( score < .8) {
-      return EXIT_FAILURE;
-  }
-  else {
-      return EXIT_SUCCESS;
+  if (score < .8) {
+    return EXIT_FAILURE;
+  } else {
+    return EXIT_SUCCESS;
   }
 }

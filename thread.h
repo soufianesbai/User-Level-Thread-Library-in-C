@@ -45,8 +45,8 @@ extern int thread_join(thread_t thread, void **retval);
 extern void thread_exit(void *retval) __attribute__((__noreturn__));
 
 typedef struct thread_mutex {
-    int locked;                         // 0 = free, 1 = occupied
-    struct thread_queue waiting_queue;  // Queue of threads waiting for the mutex
+  int locked;                        // 0 = free, 1 = occupied
+  struct thread_queue waiting_queue; // Queue of threads waiting for the mutex
 } thread_mutex_t;
 
 int thread_mutex_init(thread_mutex_t *mutex);

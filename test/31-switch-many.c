@@ -1,13 +1,14 @@
-#include <stdio.h>
+#include "thread.h"
 #include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
-#include <stdint.h>
-#include "thread.h"
 
 /* test de plein de switch par plein de threads
  *
- * la durée du programme doit etre proportionnelle au nombre de threads et de yields donnés en argument
+ * la durée du programme doit etre proportionnelle au nombre de threads et de
+ * yields donnés en argument
  *
  * support nécessaire:
  * - thread_create()
@@ -16,18 +17,16 @@
  * - thread_join() avec récupération de la valeur de retour
  */
 
-static void * thfunc(void *_nbyield)
-{
-  int nbyield = (intptr_t) _nbyield;
+static void *thfunc(void *_nbyield) {
+  int nbyield = (intptr_t)_nbyield;
   int i;
 
-  for(i=0; i<nbyield; i++)
+  for (i = 0; i < nbyield; i++)
     thread_yield();
   return NULL;
 }
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
   int nbth, i, err;
   int nbyield;
   thread_t *ths;
@@ -47,15 +46,15 @@ int main(int argc, char *argv[])
 
   gettimeofday(&tv1, NULL);
 
-  for(i=0; i<nbth; i++) {
-    err = thread_create(&ths[i], thfunc, (void*) (intptr_t) nbyield);
+  for (i = 0; i < nbth; i++) {
+    err = thread_create(&ths[i], thfunc, (void *)(intptr_t)nbyield);
     assert(!err);
   }
 
-  for(i=0; i<nbyield; i++)
+  for (i = 0; i < nbyield; i++)
     thread_yield();
 
-  for(i=0; i<nbth; i++) {
+  for (i = 0; i < nbth; i++) {
     void *res;
     err = thread_join(ths[i], &res);
     assert(!err);
@@ -63,9 +62,8 @@ int main(int argc, char *argv[])
   }
 
   gettimeofday(&tv2, NULL);
-  us = (tv2.tv_sec-tv1.tv_sec)*1000000+(tv2.tv_usec-tv1.tv_usec);
-  printf("%d yield avec %d threads: %ld us\n",
-	 nbyield, nbth, us);
+  us = (tv2.tv_sec - tv1.tv_sec) * 1000000 + (tv2.tv_usec - tv1.tv_usec);
+  printf("%d yield avec %d threads: %ld us\n", nbyield, nbth, us);
   printf("GRAPH;31;%d;%d;%lu\n", nbyield, nbth, us);
 
   free(ths);

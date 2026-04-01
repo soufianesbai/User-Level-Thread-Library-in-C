@@ -1,6 +1,6 @@
 PYTHON=python3
 CC = gcc
-CLANG ?= clang
+CLANG_FORMAT ?= clang-format
 CFLAGS  = -Wall -Wextra -g -fPIC
 LDFLAGS = -L. -lthread -lpthread
 PYTHON ?= python
@@ -21,6 +21,7 @@ LIB = libthread.so
 TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
 TEST_BINS = $(patsubst $(TEST_DIR)/%.c, %, $(TEST_SRCS))
 TEST_BINS_PTHREAD = $(patsubst %, %-pthread, $(TEST_BINS))
+FORMAT_SRCS = $(wildcard *.c) $(wildcard *.h) $(wildcard $(TEST_DIR)/*.c) $(wildcard $(TEST_DIR)/*.h)
 
 # --- Main targets ---
 
@@ -46,10 +47,6 @@ pthreads:
 		$(CC) $(CFLAGS) -DUSE_PTHREAD -I. $(TEST_DIR)/$$t.c -o bin/$$t-pthread -lpthread; \
 	done
 
-clang:
-	$(MAKE) CC=$(CLANG) all
-	$(MAKE) CC=$(CLANG) pthreads
-
 # --- Installation ---
 
 install: all pthreads
@@ -73,4 +70,7 @@ clean:
 graphs: all pthreads
 	$(PYTHON) scripts/benchmark_plot.py $(ARGS)
 
-.PHONY: all tests pthreads clang install valgrind clean graphs bench-plot bench-plot-quick
+format:
+	$(CLANG_FORMAT) -i $(FORMAT_SRCS)
+
+.PHONY: all tests pthreads clang install valgrind clean graphs format clang-format bench-plot bench-plot-quick

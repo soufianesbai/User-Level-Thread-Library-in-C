@@ -1,6 +1,6 @@
-#include <stdio.h>
-#include <assert.h>
 #include "../thread.h"
+#include <assert.h>
+#include <stdio.h>
 
 /* test de switchs.
  *
@@ -15,23 +15,21 @@
  * - thread_join() avec récupération de la valeur de retour, ou sans
  */
 
-static void * thfunc(void *id)
-{
+static void *thfunc(void *id) {
   int err, i;
-  for(i=0; i<10; i++) {
-    printf("%s yield vers un autre thread\n", (char*) id);
+  for (i = 0; i < 10; i++) {
+    printf("%s yield vers un autre thread\n", (char *)id);
     err = thread_yield();
     assert(!err);
   }
 
-  printf("%s terminé\n", (char*) id);
+  printf("%s terminé\n", (char *)id);
   thread_exit(NULL);
-  return (void*) 0xdeadbeef; /* unreachable, shut up the compiler */
+  return (void *)0xdeadbeef; /* unreachable, shut up the compiler */
 }
 
-int main()
-{
-  thread_t th1,th2,th3;
+int main() {
+  thread_t th1, th2, th3;
   void *res;
   int err, i;
 
@@ -42,7 +40,7 @@ int main()
   err = thread_create(&th3, thfunc, "fils3");
   assert(!err);
   /* des switchs avec l'autre thread */
-  for(i=0; i<20; i++) {
+  for (i = 0; i < 20; i++) {
     printf("le main yield vers un fils\n");
     err = thread_yield();
     assert(!err);
