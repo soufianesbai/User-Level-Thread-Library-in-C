@@ -65,6 +65,7 @@ static const int MAX_POOLED_STACKS = 64; // Prevent unbounded pool growth
  */
 static struct thread_queue zombie_queue;
 static int zombie_initialized = 0;
+static int cleanup_registered = 0;
 
 /*
  * stack_pool_alloc — pop a stack from the pool, or allocate a fresh one.
@@ -164,7 +165,9 @@ static void zombie_add(thread *t) {
  * Also returns any pooled stacks to the pool for reuse.
  */
 static void free_zombies(void) {
-  assert(zombie_initialized);
+  if (!zombie_initialized) {
+    return;
+  }
 
   thread *t = TAILQ_FIRST(&zombie_queue);
   while (t != NULL) {
@@ -183,6 +186,15 @@ static void free_zombies(void) {
     free(t);
     t = next;
   }
+}
+
+/*
+ * cleanup_at_exit — process-exit cleanup for normal return from main.
+ * Must be idempotent because explicit exit paths may invoke it too.
+ */
+static void cleanup_at_exit(void) {
+  free_zombies();
+  stack_pool_free_all();
 }
 
 /*
@@ -239,6 +251,10 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   if (!scheduler_initialized) {
     TAILQ_INIT(&ready_queue);
     TAILQ_INIT(&main_thread.join_queue);
+    if (!cleanup_registered) {
+      atexit(cleanup_at_exit);
+      cleanup_registered = 1;
+    }
     // Initialize the main thread's context so it can be switched to like any
     // other thread.
     if (getcontext(&main_thread.context) == -1) {
