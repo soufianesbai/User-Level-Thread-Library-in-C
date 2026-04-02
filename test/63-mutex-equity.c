@@ -30,8 +30,7 @@ static void *thfunc(void *dummy __attribute__((unused))) {
 
   /* on incremente progressivement fini jusque 5 pour debloquer le main */
   for (i = 0; i < 5; i++) {
-    printf("  le fils yield sans le mutex et incrémente le compteur %u\n",
-           fini);
+    printf("  le fils yield sans le mutex et incrémente le compteur %u\n", fini);
     thread_yield();
     fini++;
   }
@@ -64,9 +63,7 @@ int main(void) {
   /* on prend le lock puis on attend que l'autre mette fini = 5 */
   thread_mutex_lock(&lock);
   while (fini != 5) {
-    printf(
-        "le père yield avec le mutex en attendant que le compteur %u soit 5\n",
-        fini);
+    printf("le père yield avec le mutex en attendant que le compteur %u soit 5\n", fini);
     thread_yield();
   }
   thread_mutex_unlock(&lock);

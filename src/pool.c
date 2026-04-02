@@ -24,8 +24,12 @@ int stack_pool_alloc(struct stack_entry *entry) {
   }
 
   // Allocate a fresh stack with guard page
-  void *map = mmap(NULL, STACK_SIZE + GUARD_SIZE, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
+  void *map = mmap(NULL,
+                   STACK_SIZE + GUARD_SIZE,
+                   PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
+                   -1,
+                   0);
   if (map == MAP_FAILED) {
     return -1;
   }
@@ -38,8 +42,7 @@ int stack_pool_alloc(struct stack_entry *entry) {
   void *stack = (char *)map + GUARD_SIZE;
   entry->map = map;
   entry->stack = stack;
-  entry->valgrind_id =
-      VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
+  entry->valgrind_id = VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
   return 0;
 }
 
@@ -59,8 +62,7 @@ void stack_pool_push(struct stack_entry *entry) {
     int new_cap = (stack_pool_cap == 0) ? 8 : stack_pool_cap * 2;
     if (new_cap > MAX_POOLED_STACKS)
       new_cap = MAX_POOLED_STACKS;
-    struct stack_entry *new_pool =
-        realloc(stack_pool, sizeof(*new_pool) * new_cap);
+    struct stack_entry *new_pool = realloc(stack_pool, sizeof(*new_pool) * new_cap);
     if (new_pool == NULL) {
       // Realloc failed; free the stack instead
       VALGRIND_STACK_DEREGISTER(entry->valgrind_id);

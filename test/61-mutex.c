@@ -93,8 +93,7 @@ int main(int argc, char *argv[]) {
   us = (tv2.tv_sec - tv1.tv_sec) * 1000000 + (tv2.tv_usec - tv1.tv_usec);
 
   if (counter == (nb * 1000)) {
-    printf("La somme a été correctement calculée (%d * 1000 = %d) en %ld us\n",
-           nb, counter, us);
+    printf("La somme a été correctement calculée (%d * 1000 = %d) en %ld us\n", nb, counter, us);
     printf("GRAPH;61;%d;%ld\n", nb, us);
     return EXIT_SUCCESS;
   } else {

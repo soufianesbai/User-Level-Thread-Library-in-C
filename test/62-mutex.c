@@ -105,11 +105,9 @@ int main(int argc, char *argv[]) {
   err = EXIT_SUCCESS;
   for (i = 0; i < NB_MUTEX; i++) {
     if (counter[i] == (nb * 1000)) {
-      printf("La somme %d a été correctement calculée: %d * 1000 = %d\n", i, nb,
-             counter[i]);
+      printf("La somme %d a été correctement calculée: %d * 1000 = %d\n", i, nb, counter[i]);
     } else {
-      printf("Le résultat %d est INCORRECT: %d * 1000 != %d\n", i, nb,
-             counter[i]);
+      printf("Le résultat %d est INCORRECT: %d * 1000 != %d\n", i, nb, counter[i]);
       err = EXIT_FAILURE;
     }
   }

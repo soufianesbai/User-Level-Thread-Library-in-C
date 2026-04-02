@@ -22,14 +22,14 @@ typedef struct {
 // Function to apply the reduction operation
 long long apply_op(long long a, long long b, ReduceOp op) {
   switch (op) {
-  case REDUCE_SUM:
-    return a + b;
-  case REDUCE_MIN:
-    return a < b ? a : b;
-  case REDUCE_MAX:
-    return a > b ? a : b;
-  default:
-    return 0;
+    case REDUCE_SUM:
+      return a + b;
+    case REDUCE_MIN:
+      return a < b ? a : b;
+    case REDUCE_MAX:
+      return a > b ? a : b;
+    default:
+      return 0;
   }
 }
 
@@ -83,17 +83,14 @@ int main() {
     thread_create(&t, reduce_thread, &args);
     thread_join(t, NULL);
     gettimeofday(&end, NULL);
-    long long elapsed_us =
-        (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
+    long long elapsed_us = (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
     printf("%s = %lld\n", op_names[op_idx], args.result);
     if (elapsed_us < 1000)
       printf("Execution time for %s: %lld us\n", op_names[op_idx], elapsed_us);
     else if (elapsed_us < 1000000)
-      printf("Execution time for %s: %.3f ms\n", op_names[op_idx],
-             elapsed_us / 1000.0);
+      printf("Execution time for %s: %.3f ms\n", op_names[op_idx], elapsed_us / 1000.0);
     else
-      printf("Execution time for %s: %.3f s\n", op_names[op_idx],
-             elapsed_us / 1000000.0);
+      printf("Execution time for %s: %.3f s\n", op_names[op_idx], elapsed_us / 1000000.0);
   }
 
   free(array);

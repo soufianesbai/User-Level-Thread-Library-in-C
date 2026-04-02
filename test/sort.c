@@ -107,8 +107,7 @@ int main() {
     }
   }
 
-  long long elapsed_us =
-      (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
+  long long elapsed_us = (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
   printf("Sorted: %s\n", sorted ? "yes" : "no");
   if (elapsed_us < 1000)
     printf("Execution time: %lld us\n", elapsed_us);

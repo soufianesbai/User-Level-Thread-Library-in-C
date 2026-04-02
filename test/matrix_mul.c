@@ -46,8 +46,8 @@ int main() {
     B[i] = rand() % 100;
   }
 
-  int num_blocks = (N + BLOCK_SIZE - 1) /
-                   BLOCK_SIZE; // Calculate number of blocks needed, rounding up
+  int num_blocks =
+      (N + BLOCK_SIZE - 1) / BLOCK_SIZE; // Calculate number of blocks needed, rounding up
   thread_t *threads = malloc(sizeof(thread_t) * num_blocks);
   MatMulArgs *args = malloc(sizeof(MatMulArgs) * num_blocks);
 
@@ -75,8 +75,7 @@ int main() {
   }
 
   gettimeofday(&end, NULL);
-  long long elapsed_us =
-      (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
+  long long elapsed_us = (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
   printf("Matrix-matrix multiplication completed.\n");
   if (elapsed_us < 1000)
     printf("Execution time: %lld us\n", elapsed_us);

@@ -57,8 +57,7 @@ int main() {
   int *array = malloc(sizeof(int) * ARRAY_SIZE);
   assert(array != NULL);
   for (int i = 0; i < ARRAY_SIZE; ++i) {
-    array[i] =
-        i + 1; // For testing: expected sum = ARRAY_SIZE * (ARRAY_SIZE + 1) / 2
+    array[i] = i + 1; // For testing: expected sum = ARRAY_SIZE * (ARRAY_SIZE + 1) / 2
   }
 
   // Prepare arguments for the initial thread
@@ -72,8 +71,7 @@ int main() {
   thread_join(t, NULL);
   gettimeofday(&end, NULL);
 
-  long long elapsed_us =
-      (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
+  long long elapsed_us = (end.tv_sec - start.tv_sec) * 1000000LL + (end.tv_usec - start.tv_usec);
   printf("Sum = %lld\n", args.result);
   if (elapsed_us < 1000)
     printf("Execution time: %lld us\n", elapsed_us);
