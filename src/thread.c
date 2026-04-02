@@ -41,6 +41,7 @@ int swap_thread(thread *prev, thread *next) {
   next->state = THREAD_RUNNING;
   return swapcontext(&prev->context, &next->context);
 }
+
 /*
   a wrapper for the preemption signal handler that just yields the current thread.
   sigaction take an func(int) not a func(void)

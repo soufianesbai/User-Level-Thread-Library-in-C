@@ -4,7 +4,6 @@
 #include <stddef.h>
 #include <sys/time.h>
 
-
 static struct itimerval timer;
 static struct sigaction sa;
 static sigset_t sigvtalrm_mask;
