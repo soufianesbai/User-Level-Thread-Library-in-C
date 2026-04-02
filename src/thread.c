@@ -1,6 +1,6 @@
 #include "thread.h"
-#include "thread_internal.h"
 #include "preemption.h"
+#include "thread_internal.h"
 #include <assert.h>
 #include <errno.h>
 #include <signal.h>
@@ -49,7 +49,6 @@ int swap_thread(thread *prev, thread *next) {
 void preemption_handler(int sig) {
   (void)sig;
   thread_yield();
-  // in_preemption_handler = 0;
 }
 
 /*
@@ -145,9 +144,7 @@ int thread_yield(void) {
   if (!next) {
     // No other thread is ready to run, so we just return and continue
     // executing the current thread.
-    if (!in_preemption_handler) {
-      preem_unblock();
-    }
+    preem_unblock();
     return 0;
   }
 
@@ -165,9 +162,7 @@ int thread_yield(void) {
   // next->state = THREAD_RUNNING;
 
   // swapcontext(&prev->context, &next->context);
-  if (!in_preemption_handler) {
-    preem_unblock();
-  }
+  preem_unblock();
   return 0;
 }
 
@@ -221,18 +216,16 @@ void thread_exit(void *retval) {
     thread_zombie_add(dying);
   }
 
-
   thread *next = TAILQ_FIRST(&ready_queue);
 
-  if(dying->joined_by != NULL){
+  if (dying->joined_by != NULL) {
     next = dying->joined_by;
   }
   if (!next) {
     thread_switch_to_cleanup();
   }
-  
 
-  if(next->state == THREAD_READY){
+  if (next->state == THREAD_READY) {
     TAILQ_REMOVE(&ready_queue, next, entries);
   }
   // Remove the next thread from the ready queue and switch to it
@@ -245,8 +238,8 @@ void thread_exit(void *retval) {
   // save the dying thread's context — we will never return to it).
   setcontext(&current_thread->context);
 
-  // no need for unblocking preemption here since we are exiting the thread and will never return to it
-  // If setcontext returns, it failed. Exit with error.
+  // no need for unblocking preemption here since we are exiting the thread and will never return to
+  // it If setcontext returns, it failed. Exit with error.
   exit(1);
 }
 
@@ -293,7 +286,7 @@ int thread_join(thread_t thread_handle, void **retval) {
     // We never switch directly to target here because it may not be READY.
 
     while (target->state != THREAD_TERMINATED) {
-      if(target->state == THREAD_READY){
+      if (target->state == THREAD_READY) {
         swap_thread(current_thread, target);
         continue;
       }
@@ -333,7 +326,6 @@ int thread_join(thread_t thread_handle, void **retval) {
     free(target);
   }
   preem_unblock();
-
 
   return 0;
 }
