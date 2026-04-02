@@ -36,11 +36,16 @@ void thread_set_current_thread(thread *t) {
   set current_thread to next as THREAD_RUNNING and switch context from prev to next.
 */
 int swap_thread(thread *prev, thread *next) {
+  int ret;
+
   // utile to avoid duplicated code
   TAILQ_REMOVE(&ready_queue, next, entries);
   current_thread = next;
   next->state = THREAD_RUNNING;
-  return swapcontext(&prev->context, &next->context);
+  ret = swapcontext(&prev->context, &next->context);
+  current_thread = prev;
+  prev->state = THREAD_RUNNING;
+  return ret;
 }
 /*
   a wrapper for the preemption signal handler that just yields the current thread.
@@ -188,6 +193,7 @@ int thread_yield_to(thread_t target_handle) {
   }
 
   thread *prev = current_thread;
+  prev->state = THREAD_READY;
   TAILQ_INSERT_TAIL(&ready_queue, prev, entries);
 
   swap_thread(prev, target);

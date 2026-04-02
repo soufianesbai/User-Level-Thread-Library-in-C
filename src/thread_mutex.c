@@ -63,6 +63,8 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
   thread_set_current_thread(next);
   next->state = THREAD_RUNNING;
   swapcontext(&prev->context, &next->context);
+  thread_set_current_thread(prev);
+  prev->state = THREAD_RUNNING;
   preem_unblock();
 
   // When we return here, unlock() has transferred ownership to us.
