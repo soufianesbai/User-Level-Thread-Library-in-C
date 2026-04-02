@@ -108,7 +108,6 @@ static ucontext_t cleanup_ctx;
 static void do_final_cleanup(void) {
   free_zombies();
   stack_pool_free_all();
-  exit(0);
 }
 
 /*
@@ -122,8 +121,7 @@ static void switch_to_cleanup(void) {
   cleanup_ctx.uc_link = NULL;
   makecontext(&cleanup_ctx, do_final_cleanup, 0);
   setcontext(&cleanup_ctx);
-  // unreachable
-  exit(1);
+  exit(1); // unreachable
 }
 
 /*

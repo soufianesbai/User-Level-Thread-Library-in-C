@@ -1,19 +1,21 @@
-PYTHON=python3
 CC = gcc
 CLANG_FORMAT ?= clang-format
+PYTHON ?= python3
 CFLAGS  = -Wall -Wextra -g -fPIC
+CPPFLAGS = -I$(INCLUDE_DIR)
 LDFLAGS = -lpthread
-PYTHON ?= python
 
 # Directories
+SRC_DIR = src
+INCLUDE_DIR = include
 TEST_DIR = test
 INSTALL_DIR = install
 BIN_DIR = $(INSTALL_DIR)/bin
 LIB_DIR = $(INSTALL_DIR)/lib
 
 # Source files
-SRC = thread.c pool.c
-OBJ = thread.o pool.o
+SRC = $(wildcard $(SRC_DIR)/*.c)
+OBJ = $(patsubst $(SRC_DIR)/%.c, %.o, $(SRC))
 LIB = libthread.so
 
 
@@ -21,7 +23,7 @@ LIB = libthread.so
 TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
 TEST_BINS = $(patsubst $(TEST_DIR)/%.c, %, $(TEST_SRCS))
 TEST_BINS_PTHREAD = $(patsubst %, %-pthread, $(TEST_BINS))
-FORMAT_SRCS = $(wildcard *.c) $(wildcard *.h) $(wildcard $(TEST_DIR)/*.c) $(wildcard $(TEST_DIR)/*.h)
+FORMAT_SRCS = $(wildcard $(SRC_DIR)/*.c) $(wildcard $(INCLUDE_DIR)/*.h) $(wildcard $(TEST_DIR)/*.c) $(wildcard $(TEST_DIR)/*.h)
 
 # --- Main targets ---
 
@@ -29,14 +31,14 @@ all: $(LIB) tests
 
 # Build the shared library (.so)
 $(LIB): $(SRC)
-	$(CC) $(CFLAGS) -shared -o $@ $^
+	$(CC) $(CPPFLAGS) $(CFLAGS) -shared -o $@ $^
 
 
 # Build tests with custom thread library
 tests: $(LIB)
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
-		$(CC) $(CFLAGS) -I. $(TEST_DIR)/$$t.c $(SRC) -o bin/$$t $(LDFLAGS); \
+		$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_DIR)/$$t.c $(SRC) -o bin/$$t $(LDFLAGS); \
 	done
 
 
@@ -44,8 +46,8 @@ tests: $(LIB)
 pthreads:
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
-		$(CC) $(CFLAGS) -DUSE_PTHREAD -I. -c $(TEST_DIR)/$$t.c -o bin/$$t-pthread.o; \
-		$(CC) $(CFLAGS) bin/$$t-pthread.o $(SRC) -o bin/$$t-pthread $(LDFLAGS); \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -DUSE_PTHREAD -c $(TEST_DIR)/$$t.c -o bin/$$t-pthread.o; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) bin/$$t-pthread.o $(SRC) -o bin/$$t-pthread $(LDFLAGS); \
 		rm -f bin/$$t-pthread.o; \
 	done
 
@@ -67,7 +69,7 @@ valgrind: all
 	done
 
 clean:
-	rm -rf *.o *.so bin $(INSTALL_DIR) bench
+	rm -rf *.o *.so $(SRC_DIR)/*.o bin $(INSTALL_DIR) bench
 
 graphs: all pthreads
 	$(PYTHON) scripts/benchmark_plot.py $(ARGS)
