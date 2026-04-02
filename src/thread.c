@@ -25,8 +25,7 @@ typedef struct thread {
   void *retval;               // Return value from the thread
   unsigned valgrind_stack_id; // Valgrind stack ID for memory checking
   void *stack_map;            // Mapped memory for stack (for reuse in pool)
-  struct thread_queue join_queue; // Threads waiting to join this one
-  struct thread *joined_by;       // The thread that is joining on this thread (if any)
+  struct thread *joined_by;  // The thread that is joining on this thread (if any)
 } thread;
 
 // Queue of threads that are ready to run
@@ -148,7 +147,6 @@ thread_t thread_self(void) {
 int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   if (!scheduler_initialized) {
     TAILQ_INIT(&ready_queue);
-    TAILQ_INIT(&main_thread.join_queue);
     if (!cleanup_registered) {
       atexit(do_final_cleanup);
       cleanup_registered = 1;
@@ -188,7 +186,6 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->stack_map = stack_entry.map;
   newth->valgrind_stack_id = stack_entry.valgrind_id;
   newth->joined_by = NULL;
-  TAILQ_INIT(&newth->join_queue);
 
   if (getcontext(&newth->context) == -1) {
     free(newth);
@@ -284,15 +281,6 @@ void thread_exit(void *retval) {
 
   thread *dying = current_thread;
 
-  // Wake up all threads waiting to join this one
-  struct thread_queue *jq = &dying->join_queue;
-  thread *joiner;
-  while ((joiner = TAILQ_FIRST(jq)) != NULL) {
-    TAILQ_REMOVE(jq, joiner, entries);
-    joiner->state = THREAD_READY;
-    TAILQ_INSERT_TAIL(&ready_queue, joiner, entries);
-  }
-
   thread *next = TAILQ_FIRST(&ready_queue);
 
   if (!next) {
@@ -355,40 +343,10 @@ int thread_join(thread_t thread_handle, void **retval) {
   target->joined_by = current_thread;
 
   // If the target is already terminated, process it immediately
-  if (target->state == THREAD_TERMINATED) {
-    goto cleanup;
+  while (target->state != THREAD_TERMINATED) {
+    thread_yield_to((thread_t)target);
   }
 
-  // Target is still running: block the current thread in the target's join
-  // queue
-  thread *joiner = current_thread;
-  struct thread_queue *jq = &target->join_queue;
-
-  // Add joiner to target's join queue
-  joiner->state = THREAD_BLOCKED;
-  TAILQ_INSERT_TAIL(jq, joiner, entries);
-
-  // Pick the next thread to run
-  thread *next = TAILQ_FIRST(&ready_queue);
-  if (next == NULL) {
-    // No other thread is ready; target must finish or we deadlock
-    // This is an error, so remove ourselves and fail
-    TAILQ_REMOVE(jq, joiner, entries);
-    joiner->state = THREAD_RUNNING;
-    errno = EDEADLK;
-    return EDEADLK;
-  }
-
-  // Switch to the next thread
-  TAILQ_REMOVE(&ready_queue, next, entries);
-  current_thread = next;
-  next->state = THREAD_RUNNING;
-
-  swapcontext(&joiner->context, &next->context);
-
-  // When we return here, we've been woken up by target's thread_exit
-
-cleanup:
   if (retval != NULL) {
     *retval = target->retval;
   }
