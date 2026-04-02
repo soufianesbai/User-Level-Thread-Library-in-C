@@ -1,5 +1,5 @@
 #include "thread.h"
-
+#include "pool.h"
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -8,9 +8,6 @@
 #include <sys/queue.h>
 #include <ucontext.h>
 #include <valgrind/valgrind.h>
-
-#define STACK_SIZE (1024 * 1024)
-#define GUARD_SIZE 4096
 
 #define THREAD_READY 0
 #define THREAD_RUNNING 1
@@ -41,20 +38,6 @@ static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
 
-/* Stack pool — reuse allocated stacks to avoid mmap/munmap overhead
- * Each entry holds a pre-allocated stack that can be reused by new threads.
- */
-struct stack_entry {
-  void *map;  // Mapped memory region (includes guard page)
-  void *stack; // Usable stack pointer (after guard page)
-  unsigned valgrind_id;
-};
-
-static struct stack_entry *stack_pool = NULL;
-static int stack_pool_size = 0;
-static int stack_pool_cap = 0;
-static const int MAX_POOLED_STACKS = 64; // Prevent unbounded pool growth
-
 /*
  * Zombie queue — terminated threads not yet joined.
  *
@@ -65,80 +48,6 @@ static const int MAX_POOLED_STACKS = 64; // Prevent unbounded pool growth
  */
 static struct thread_queue zombie_queue;
 static int zombie_initialized = 0;
-static int cleanup_registered = 0;
-
-/*
- * stack_pool_alloc — pop a stack from the pool, or allocate a fresh one.
- */
-static int stack_pool_alloc(struct stack_entry *entry) {
-  if (stack_pool_size > 0) {
-    // Reuse a stack from the pool
-    *entry = stack_pool[--stack_pool_size];
-    return 0;
-  }
-
-  // Allocate a fresh stack with guard page
-  void *map = mmap(NULL, STACK_SIZE + GUARD_SIZE, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
-  if (map == MAP_FAILED) {
-    return -1;
-  }
-
-  if (mprotect(map, GUARD_SIZE, PROT_NONE) == -1) {
-    munmap(map, STACK_SIZE + GUARD_SIZE);
-    return -1;
-  }
-
-  void *stack = (char *)map + GUARD_SIZE;
-  entry->map = map;
-  entry->stack = stack;
-  entry->valgrind_id =
-      VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
-  return 0;
-}
-
-/*
- * stack_pool_push — return a stack to the pool for reuse.
- */
-static void stack_pool_push(struct stack_entry *entry) {
-  if (stack_pool_size >= MAX_POOLED_STACKS) {
-    // Pool is full; free the stack immediately
-    VALGRIND_STACK_DEREGISTER(entry->valgrind_id);
-    munmap(entry->map, STACK_SIZE + GUARD_SIZE);
-    return;
-  }
-
-  if (stack_pool_size >= stack_pool_cap) {
-    // Grow the pool array
-    int new_cap = (stack_pool_cap == 0) ? 8 : stack_pool_cap * 2;
-    if (new_cap > MAX_POOLED_STACKS) new_cap = MAX_POOLED_STACKS;
-    struct stack_entry *new_pool = realloc(stack_pool, sizeof(*new_pool) * new_cap);
-    if (new_pool == NULL) {
-      // Realloc failed; free the stack instead
-      VALGRIND_STACK_DEREGISTER(entry->valgrind_id);
-      munmap(entry->map, STACK_SIZE + GUARD_SIZE);
-      return;
-    }
-    stack_pool = new_pool;
-    stack_pool_cap = new_cap;
-  }
-
-  stack_pool[stack_pool_size++] = *entry;
-}
-
-/*
- * stack_pool_free_all — drain the pool at program exit.
- */
-static void stack_pool_free_all(void) {
-  for (int i = 0; i < stack_pool_size; ++i) {
-    VALGRIND_STACK_DEREGISTER(stack_pool[i].valgrind_id);
-    munmap(stack_pool[i].map, STACK_SIZE + GUARD_SIZE);
-  }
-  free(stack_pool);
-  stack_pool = NULL;
-  stack_pool_size = 0;
-  stack_pool_cap = 0;
-}
 
 /*
  * zombie_init — initialises the zombie queue on first use.
@@ -174,27 +83,14 @@ static void free_zombies(void) {
     thread *next = TAILQ_NEXT(t, entries);
     TAILQ_REMOVE(&zombie_queue, t, entries);
 
-    // Return stack to the pool if it was allocated dynamically
+    // free the entire map since no other threads will be created at this point
     if (t->stack_map != NULL) {
-      struct stack_entry entry = {
-          .map = t->stack_map,
-          .stack = t->context.uc_stack.ss_sp,
-          .valgrind_id = t->valgrind_stack_id};
-      stack_pool_push(&entry);
+      munmap(t->stack_map, STACK_SIZE + GUARD_SIZE); // Free the mapped memory
     }
 
     free(t);
     t = next;
   }
-}
-
-/*
- * cleanup_at_exit — process-exit cleanup for normal return from main.
- * Must be idempotent because explicit exit paths may invoke it too.
- */
-static void cleanup_at_exit(void) {
-  free_zombies();
-  stack_pool_free_all();
 }
 
 /*
@@ -251,10 +147,6 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   if (!scheduler_initialized) {
     TAILQ_INIT(&ready_queue);
     TAILQ_INIT(&main_thread.join_queue);
-    if (!cleanup_registered) {
-      atexit(cleanup_at_exit);
-      cleanup_registered = 1;
-    }
     // Initialize the main thread's context so it can be switched to like any
     // other thread.
     if (getcontext(&main_thread.context) == -1) {

@@ -2,7 +2,7 @@ PYTHON=python3
 CC = gcc
 CLANG_FORMAT ?= clang-format
 CFLAGS  = -Wall -Wextra -g -fPIC
-LDFLAGS = -L. -lthread -lpthread
+LDFLAGS = -lpthread
 PYTHON ?= python
 
 # Directories
@@ -12,8 +12,8 @@ BIN_DIR = $(INSTALL_DIR)/bin
 LIB_DIR = $(INSTALL_DIR)/lib
 
 # Source files
-SRC = thread.c
-OBJ = thread.o
+SRC = thread.c pool.c
+OBJ = thread.o pool.o
 LIB = libthread.so
 
 
@@ -36,7 +36,7 @@ $(LIB): $(SRC)
 tests: $(LIB)
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
-		$(CC) $(CFLAGS) -I. $(TEST_DIR)/$$t.c -o bin/$$t $(LDFLAGS) -Wl,-rpath=$(PWD)/$(INSTALL_DIR)/lib; \
+		$(CC) $(CFLAGS) -I. $(TEST_DIR)/$$t.c $(SRC) -o bin/$$t $(LDFLAGS); \
 	done
 
 
@@ -44,7 +44,9 @@ tests: $(LIB)
 pthreads:
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
-		$(CC) $(CFLAGS) -DUSE_PTHREAD -I. $(TEST_DIR)/$$t.c -o bin/$$t-pthread -lpthread; \
+		$(CC) $(CFLAGS) -DUSE_PTHREAD -I. -c $(TEST_DIR)/$$t.c -o bin/$$t-pthread.o; \
+		$(CC) $(CFLAGS) bin/$$t-pthread.o $(SRC) -o bin/$$t-pthread $(LDFLAGS); \
+		rm -f bin/$$t-pthread.o; \
 	done
 
 # --- Installation ---
