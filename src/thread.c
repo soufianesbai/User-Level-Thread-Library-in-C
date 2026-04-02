@@ -162,6 +162,7 @@ int thread_yield(void) {
   // next->state = THREAD_RUNNING;
 
   // swapcontext(&prev->context, &next->context);
+  //
   preem_unblock();
   return 0;
 }
