@@ -48,13 +48,15 @@ int swap_thread(thread *prev, thread *next) {
 */
 void preemption_handler(int sig) {
   (void)sig;
-  // if (in_preemption_handler) {
-  //   return;
-  // }
 
-  // in_preemption_handler = 1;
+  // Prevent nested scheduler entry if another timer signal arrives mid-yield.
+  if (in_preemption_handler) {
+    return;
+  }
+
+  in_preemption_handler = 1;
   thread_yield();
-  // in_preemption_handler = 0;
+  in_preemption_handler = 0;
 }
 
 /*
@@ -110,7 +112,6 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     return -1;
   }
 
-  newth->id = next_thread_id++;
   newth->start_fun = func;
   newth->arg = funcarg;
   newth->state = THREAD_READY;
