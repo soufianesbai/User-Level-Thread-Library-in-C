@@ -1,5 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
-#include "preemption.h"
+
 #include <signal.h>
 #include <stddef.h>
 #include <sys/time.h>
@@ -25,12 +25,14 @@ void preem_mask_init(void) {
 int init_prem(void (*func)(int), int ms) {
   sa.sa_handler = func;
   sigemptyset(&sa.sa_mask);
-  sa.sa_flags = SA_RESTART;
+  sa.sa_flags = SA_RESTART; // auto-restart interrupted syscalls
   sigaction(SIGVTALRM, &sa, NULL);
 
+  // First fire: after 10ms
   timer.it_value.tv_sec = 0;
-  timer.it_value.tv_usec = ms * 1000;
+  timer.it_value.tv_usec = 10000; // 10ms
 
+  // Then repeat every 10ms
   timer.it_interval.tv_sec = 0;
   timer.it_interval.tv_usec = ms * 1000;
 

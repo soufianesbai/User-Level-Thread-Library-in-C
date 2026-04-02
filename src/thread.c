@@ -19,6 +19,7 @@ static thread main_thread = {0, .state = THREAD_RUNNING, .joined_by = NULL};
 static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
+static volatile sig_atomic_t in_preemption_handler = 0;
 
 struct thread_queue *thread_get_ready_queue(void) {
   return &ready_queue;
@@ -41,15 +42,14 @@ int swap_thread(thread *prev, thread *next) {
   next->state = THREAD_RUNNING;
   return swapcontext(&prev->context, &next->context);
 }
-
 /*
   a wrapper for the preemption signal handler that just yields the current thread.
   sigaction take an func(int) not a func(void)
 */
 void preemption_handler(int sig) {
   (void)sig;
+
   thread_yield();
-  // in_preemption_handler = 0;
 }
 
 /*
@@ -145,9 +145,7 @@ int thread_yield(void) {
   if (!next) {
     // No other thread is ready to run, so we just return and continue
     // executing the current thread.
-    if (!in_preemption_handler) {
-      preem_unblock();
-    }
+    preem_unblock();
     return 0;
   }
 
@@ -165,9 +163,7 @@ int thread_yield(void) {
   // next->state = THREAD_RUNNING;
 
   // swapcontext(&prev->context, &next->context);
-  if (!in_preemption_handler) {
-    preem_unblock();
-  }
+  preem_unblock();
   return 0;
 }
 
