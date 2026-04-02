@@ -41,6 +41,8 @@ ALL_TESTS: list[TestCase] = [
     TestCase("62-mutex", ["10"]),
     TestCase("63-mutex-equity", []),
     TestCase("64-mutex-join", []),
+    #TestCase("71-preemption", ["5"]),
+    TestCase("81-deadlock", []),
     TestCase("sum", []),
     TestCase("sort", []),
     TestCase("reduction", []),

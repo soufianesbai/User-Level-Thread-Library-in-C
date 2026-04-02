@@ -12,6 +12,7 @@ TEST_DIR = test
 INSTALL_DIR = install
 BIN_DIR = $(INSTALL_DIR)/bin
 LIB_DIR = $(INSTALL_DIR)/lib
+COMPAT_HEADERS = thread.h pool.h
 
 # Source files
 SRC = $(wildcard $(SRC_DIR)/*.c)
@@ -27,7 +28,15 @@ FORMAT_SRCS = $(wildcard $(SRC_DIR)/*.c) $(wildcard $(INCLUDE_DIR)/*.h) $(wildca
 
 # --- Main targets ---
 
-all: $(LIB) tests 
+all: compat-headers $(LIB) tests 
+
+compat-headers: $(COMPAT_HEADERS)
+
+thread.h:
+	ln -sf $(INCLUDE_DIR)/thread.h $@
+
+pool.h:
+	ln -sf $(INCLUDE_DIR)/pool.h $@
 
 # Build the shared library (.so)
 $(LIB): $(SRC)
@@ -35,7 +44,7 @@ $(LIB): $(SRC)
 
 
 # Build tests with custom thread library
-tests: $(LIB)
+tests: compat-headers $(LIB)
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
 		$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_DIR)/$$t.c $(SRC) -o bin/$$t $(LDFLAGS); \
@@ -43,7 +52,7 @@ tests: $(LIB)
 
 
 # Build tests with pthreads (-DUSE_PTHREAD)
-pthreads:
+pthreads: compat-headers
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
 		$(CC) $(CPPFLAGS) $(CFLAGS) -DUSE_PTHREAD -c $(TEST_DIR)/$$t.c -o bin/$$t-pthread.o; \
@@ -69,7 +78,7 @@ valgrind: all
 	done
 
 clean:
-	rm -rf *.o *.so $(SRC_DIR)/*.o bin $(INSTALL_DIR) bench
+	rm -rf *.o *.so $(SRC_DIR)/*.o bin $(INSTALL_DIR) bench $(COMPAT_HEADERS)
 
 graphs: all pthreads
 	$(PYTHON) scripts/benchmark_plot.py $(ARGS)

@@ -26,6 +26,7 @@ typedef struct thread {
   unsigned valgrind_stack_id;     // Valgrind stack ID for memory checking
   void *stack_map;                // Mapped memory for stack (for reuse in pool)
   struct thread_queue join_queue; // Threads waiting to join this one
+  struct thread *joining; // The thread that is joining on this thread (if any)
 } thread;
 
 // Queue of threads that are ready to run
@@ -33,7 +34,7 @@ static struct thread_queue ready_queue;
 
 // The main thread is initialized at the start of the program and will be used
 // as the initial context for the main execution flow.
-static thread main_thread = {0, .state = THREAD_RUNNING};
+static thread main_thread = {0, .state = THREAD_RUNNING, .joining = NULL};
 static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
@@ -184,6 +185,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->retval = NULL;
   newth->stack_map = stack_entry.map;
   newth->valgrind_stack_id = stack_entry.valgrind_id;
+  newth->joining = NULL;
   TAILQ_INIT(&newth->join_queue);
 
   if (getcontext(&newth->context) == -1) {
@@ -230,6 +232,36 @@ int thread_yield(void) {
   next->state = THREAD_RUNNING;
 
   swapcontext(&prev->context, &next->context);
+  return 0;
+}
+
+/*
+ * thread_yield_to — yields execution to the specified target thread, if it is
+ * ready. If the target thread is not ready, falls back to a normal yield.
+ */
+int thread_yield_to(thread_t target_handle) {
+  if (target_handle == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  thread *target = (thread *)target_handle;
+
+  // If the target thread is not ready, fallback to a normal yield
+  if (target->state != THREAD_READY) {
+    return thread_yield();
+  }
+
+  thread *prev = current_thread;
+  TAILQ_REMOVE(&ready_queue, target, entries);
+
+  prev->state = THREAD_READY;
+  TAILQ_INSERT_TAIL(&ready_queue, prev, entries);
+
+  current_thread = target;
+  target->state = THREAD_RUNNING;
+
+  swapcontext(&prev->context, &target->context);
   return 0;
 }
 
@@ -300,6 +332,26 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   thread *target = (thread *)thread_handle;
 
+  // Multiple join check: a thread can only be joined by one other thread
+  if (target->joining != NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  // Deadlock check: current thread cannot join a thread that it is already
+  // waiting on (directly or transitively).
+  thread *cursor = current_thread;
+  while (cursor != NULL) {
+    if (cursor == target) {
+      errno = EDEADLK;
+      return EDEADLK;
+    }
+    cursor = cursor->joining;
+  }
+
+  // Mark the current thread as the joiner of the target thread
+  target->joining = current_thread;
+
   // If the target is already terminated, process it immediately
   if (target->state == THREAD_TERMINATED) {
     goto cleanup;
@@ -322,7 +374,7 @@ int thread_join(thread_t thread_handle, void **retval) {
     TAILQ_REMOVE(jq, joiner, entries);
     joiner->state = THREAD_RUNNING;
     errno = EDEADLK;
-    return -1;
+    return EDEADLK;
   }
 
   // Switch to the next thread
