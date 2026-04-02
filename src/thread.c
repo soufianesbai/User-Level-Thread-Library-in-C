@@ -151,7 +151,6 @@ int thread_yield(void) {
   if (!next) {
     // No other thread is ready to run, so we just return and continue
     // executing the current thread.
-    if (!in_preemption_handler) {
       preem_unblock();
     }
     return 0;
