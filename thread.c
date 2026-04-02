@@ -37,6 +37,7 @@ static thread main_thread = {0, .state = THREAD_RUNNING};
 static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
+static int cleanup_registered = 0;
 
 /*
  * Zombie queue — terminated threads not yet joined.
@@ -147,6 +148,10 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   if (!scheduler_initialized) {
     TAILQ_INIT(&ready_queue);
     TAILQ_INIT(&main_thread.join_queue);
+    if (!cleanup_registered) {
+      atexit(do_final_cleanup);
+      cleanup_registered = 1;
+    }
     // Initialize the main thread's context so it can be switched to like any
     // other thread.
     if (getcontext(&main_thread.context) == -1) {
