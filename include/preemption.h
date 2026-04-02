@@ -2,9 +2,8 @@
 #define PREEMPTION_H
 
 /**
- * two functions to (un)block the preemption signal, so that the current thread can safely
- * manipulate its state
- */
+ * two functions to (un)block the preemption signal, so that the current thread can safely manipulate its state
+ */ 
 void preem_block(void);
 void preem_unblock(void);
 

@@ -9,20 +9,20 @@ static struct sigaction sa;
 static sigset_t sigvtalrm_mask;
 
 void preem_block(void) {
-  sigprocmask(SIG_BLOCK, &sigvtalrm_mask, NULL);
+    sigprocmask(SIG_BLOCK, &sigvtalrm_mask, NULL);
 }
 
 void preem_unblock(void) {
-  sigprocmask(SIG_UNBLOCK, &sigvtalrm_mask, NULL);
+    sigprocmask(SIG_UNBLOCK, &sigvtalrm_mask, NULL);
 }
 
 // Call once at init, before arming the timer
 void preem_mask_init(void) {
-  sigemptyset(&sigvtalrm_mask);
-  sigaddset(&sigvtalrm_mask, SIGVTALRM);
+    sigemptyset(&sigvtalrm_mask);
+    sigaddset(&sigvtalrm_mask, SIGVTALRM);
 }
 
-int init_prem(void (*func)(int), int ms) {
+int init_prem(void (*func)(int),int ms) {
   sa.sa_handler = func;
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = SA_RESTART;
