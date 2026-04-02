@@ -146,7 +146,6 @@ int thread_yield(void) {
     // No other thread is ready to run, so we just return and continue
     // executing the current thread.
     preem_unblock();
-    preem_unblock();
     return 0;
   }
 
