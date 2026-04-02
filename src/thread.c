@@ -48,6 +48,7 @@ int swap_thread(thread *prev, thread *next) {
 void preemption_handler(int sig) {
   (void)sig;
   thread_yield();
+  // in_preemption_handler = 0;
 }
 
 /*
@@ -143,7 +144,9 @@ int thread_yield(void) {
   if (!next) {
     // No other thread is ready to run, so we just return and continue
     // executing the current thread.
-    preem_unblock();
+    if (!in_preemption_handler) {
+      preem_unblock();
+    }
     return 0;
   }
 
@@ -161,7 +164,9 @@ int thread_yield(void) {
   // next->state = THREAD_RUNNING;
 
   // swapcontext(&prev->context, &next->context);
-  preem_unblock();
+  if (!in_preemption_handler) {
+    preem_unblock();
+  }
   return 0;
 }
 
