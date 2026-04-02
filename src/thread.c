@@ -19,7 +19,7 @@ static thread main_thread = {0, .state = THREAD_RUNNING, .joined_by = NULL};
 static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
-static volatile sig_atomic_t in_preemption_handler = 0;
+static volatile sig_atomic_t preemption_pending = 0;
 
 struct thread_queue *thread_get_ready_queue(void) {
   return &ready_queue;
@@ -54,10 +54,7 @@ int swap_thread(thread *prev, thread *next) {
 */
 void preemption_handler(int sig) {
   (void)sig;
-
-  in_preemption_handler = 1;
-  thread_yield();
-  in_preemption_handler = 0;
+  preemption_pending = 1;
 }
 
 /*
@@ -148,6 +145,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
  */
 int thread_yield(void) {
   preem_block(); // Block first to avoid races with asynchronous preemption
+  preemption_pending = 0;
 
   thread *next = TAILQ_FIRST(&ready_queue);
   if (!next) {
@@ -173,9 +171,7 @@ int thread_yield(void) {
   // next->state = THREAD_RUNNING;
 
   // swapcontext(&prev->context, &next->context);
-  if (!in_preemption_handler) {
-    preem_unblock();
-  }
+  preem_unblock();
   return 0;
 }
 
