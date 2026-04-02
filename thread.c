@@ -23,8 +23,8 @@ typedef struct thread {
   entries; // Queue entries (ready queue, zombie queue, or mutex waiting queue)
   int state;    // Thread state: READY, RUNNING, TERMINATED, BLOCKED
   void *retval; // Return value from the thread
-  unsigned valgrind_stack_id; // Valgrind stack ID for memory checking
-  void *stack_map;            // Mapped memory for stack (for reuse in pool)
+  unsigned valgrind_stack_id;     // Valgrind stack ID for memory checking
+  void *stack_map;                // Mapped memory for stack (for reuse in pool)
   struct thread_queue join_queue; // Threads waiting to join this one
 } thread;
 
@@ -302,7 +302,8 @@ int thread_join(thread_t thread_handle, void **retval) {
     goto cleanup;
   }
 
-  // Target is still running: block the current thread in the target's join queue
+  // Target is still running: block the current thread in the target's join
+  // queue
   thread *joiner = current_thread;
   struct thread_queue *jq = &target->join_queue;
 
@@ -340,10 +341,9 @@ cleanup:
     TAILQ_REMOVE(&zombie_queue, target, entries);
     // Return stack to the pool
     if (target->stack_map != NULL) {
-      struct stack_entry entry = {
-          .map = target->stack_map,
-          .stack = target->context.uc_stack.ss_sp,
-          .valgrind_id = target->valgrind_stack_id};
+      struct stack_entry entry = {.map = target->stack_map,
+                                  .stack = target->context.uc_stack.ss_sp,
+                                  .valgrind_id = target->valgrind_stack_id};
       stack_pool_push(&entry);
     }
     free(target);
@@ -420,7 +420,8 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
  * Otherwise: release the mutex (locked = 0).
  */
 int thread_mutex_unlock(thread_mutex_t *mutex) {
-  if (mutex == NULL) return -1;
+  if (mutex == NULL)
+    return -1;
   if (!mutex->locked) {
     // Cannot unlock a mutex that is not locked
     return -1;

@@ -13,7 +13,6 @@ static int stack_pool_size = 0;
 static int stack_pool_cap = 0;
 static const int MAX_POOLED_STACKS = 64; // Prevent unbounded pool growth
 
-
 /*
  * stack_pool_alloc — pop a stack from the pool, or allocate a fresh one.
  */
@@ -58,8 +57,10 @@ void stack_pool_push(struct stack_entry *entry) {
   if (stack_pool_size >= stack_pool_cap) {
     // Grow the pool array
     int new_cap = (stack_pool_cap == 0) ? 8 : stack_pool_cap * 2;
-    if (new_cap > MAX_POOLED_STACKS) new_cap = MAX_POOLED_STACKS;
-    struct stack_entry *new_pool = realloc(stack_pool, sizeof(*new_pool) * new_cap);
+    if (new_cap > MAX_POOLED_STACKS)
+      new_cap = MAX_POOLED_STACKS;
+    struct stack_entry *new_pool =
+        realloc(stack_pool, sizeof(*new_pool) * new_cap);
     if (new_pool == NULL) {
       // Realloc failed; free the stack instead
       VALGRIND_STACK_DEREGISTER(entry->valgrind_id);
@@ -86,4 +87,3 @@ void stack_pool_free_all(void) {
   stack_pool_size = 0;
   stack_pool_cap = 0;
 }
-

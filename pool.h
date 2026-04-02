@@ -5,8 +5,8 @@
 #define GUARD_SIZE 4096
 
 struct stack_entry {
-  void *map; // The entire mapped region (including guard)
-  void *stack; // The usable stack area (after the guard)
+  void *map;            // The entire mapped region (including guard)
+  void *stack;          // The usable stack area (after the guard)
   unsigned valgrind_id; // Valgrind stack ID for memory checking
 };
 
