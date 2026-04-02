@@ -1,4 +1,5 @@
 #include "thread_internal.h"
+#include "preemption.h"
 #include <stddef.h>
 #include <sys/queue.h>
 #include <ucontext.h>
@@ -32,9 +33,12 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
   if (mutex == NULL)
     return -1;
 
+  preem_block();
+
   if (!mutex->locked) {
     // Fast path: mutex is free, acquire it immediately
     mutex->locked = 1;
+    preem_unblock();
     return 0;
   }
 
@@ -45,6 +49,7 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
   thread *next = TAILQ_FIRST(ready_queue);
   if (next == NULL) {
     // No other thread can unlock the mutex — deadlock
+    preem_unblock();
     return -1;
   }
 
@@ -58,6 +63,7 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
   thread_set_current_thread(next);
   next->state = THREAD_RUNNING;
   swapcontext(&prev->context, &next->context);
+  preem_unblock();
 
   // When we return here, unlock() has transferred ownership to us.
   // mutex->locked is still 1 — we are the new owner.
@@ -74,8 +80,12 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
 int thread_mutex_unlock(thread_mutex_t *mutex) {
   if (mutex == NULL)
     return -1;
+
+  preem_block();
+
   if (!mutex->locked) {
     // Cannot unlock a mutex that is not locked
+    preem_unblock();
     return -1;
   }
 
@@ -91,5 +101,7 @@ int thread_mutex_unlock(thread_mutex_t *mutex) {
   } else {
     mutex->locked = 0;
   }
+
+  preem_unblock();
   return 0;
 }

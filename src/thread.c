@@ -1,7 +1,9 @@
 #include "thread.h"
 #include "thread_internal.h"
+#include "preemption.h"
 #include <assert.h>
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/queue.h>
@@ -17,6 +19,7 @@ static thread main_thread = {0, .state = THREAD_RUNNING, .joined_by = NULL};
 static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
+static volatile sig_atomic_t in_preemption_handler = 0;
 
 struct thread_queue *thread_get_ready_queue(void) {
   return &ready_queue;
@@ -28,6 +31,30 @@ thread *thread_get_current_thread(void) {
 
 void thread_set_current_thread(thread *t) {
   current_thread = t;
+}
+/*
+  set current_thread to next as THREAD_RUNNING and switch context from prev to next.
+*/
+int swap_thread(thread *prev, thread *next) {
+  // utile to avoid duplicated code
+  TAILQ_REMOVE(&ready_queue, next, entries);
+  current_thread = next;
+  next->state = THREAD_RUNNING;
+  return swapcontext(&prev->context, &next->context);
+}
+/*
+  a wrapper for the preemption signal handler that just yields the current thread.
+  sigaction take an func(int) not a func(void)
+*/
+void preemption_handler(int sig) {
+  (void)sig;
+  // if (in_preemption_handler) {
+  //   return;
+  // }
+
+  // in_preemption_handler = 1;
+  thread_yield();
+  // in_preemption_handler = 0;
 }
 
 /*
@@ -59,6 +86,8 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     if (getcontext(&main_thread.context) == -1) {
       return -1;
     }
+
+    init_prem(preemption_handler, 5);
     scheduler_initialized = 1;
   }
 
@@ -102,9 +131,12 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->context.uc_link = NULL;
   makecontext(&newth->context, thread_entry, 0);
 
+  preem_block(); // Keep the critical section small: only shared scheduler state
+  newth->id = next_thread_id++;
   TAILQ_INSERT_TAIL(&ready_queue, newth, entries);
   *newthread = (thread_t)newth;
 
+  preem_unblock();
   return 0;
 }
 
@@ -113,15 +145,17 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
  * If no other thread is ready, returns immediately.
  */
 int thread_yield(void) {
+  preem_block(); // Block first to avoid races with asynchronous preemption
+
   thread *next = TAILQ_FIRST(&ready_queue);
   if (!next) {
     // No other thread is ready to run, so we just return and continue
     // executing the current thread.
+    preem_unblock();
     return 0;
   }
 
   thread *prev = current_thread;
-  TAILQ_REMOVE(&ready_queue, next, entries);
 
   if (prev->state == THREAD_RUNNING) {
     prev->state = THREAD_READY;
@@ -130,10 +164,12 @@ int thread_yield(void) {
                       entries); // Put the current thread back in the ready queue
   }
 
-  current_thread = next;
-  next->state = THREAD_RUNNING;
+  swap_thread(prev, next);
+  // current_thread = next;
+  // next->state = THREAD_RUNNING;
 
-  swapcontext(&prev->context, &next->context);
+  // swapcontext(&prev->context, &next->context);
+  preem_unblock();
   return 0;
 }
 
@@ -147,23 +183,22 @@ int thread_yield_to(thread_t target_handle) {
     return -1;
   }
 
+  preem_block(); // Block first to avoid races with asynchronous preemption
+
   thread *target = (thread *)target_handle;
 
   // If the target thread is not ready, fallback to a normal yield
   if (target->state != THREAD_READY) {
+    preem_unblock();
     return thread_yield();
   }
 
   thread *prev = current_thread;
-  TAILQ_REMOVE(&ready_queue, target, entries);
-
-  prev->state = THREAD_READY;
   TAILQ_INSERT_TAIL(&ready_queue, prev, entries);
 
-  current_thread = target;
-  target->state = THREAD_RUNNING;
+  swap_thread(prev, target);
 
-  swapcontext(&prev->context, &target->context);
+  preem_unblock();
   return 0;
 }
 
@@ -179,35 +214,40 @@ int thread_yield_to(thread_t target_handle) {
  *     do_final_cleanup() can safely free any remaining zombies.
  */
 void thread_exit(void *retval) {
+  preem_block(); // Block preemption while exiting the thread
   current_thread->retval = retval;
   current_thread->state = THREAD_TERMINATED;
 
   thread *dying = current_thread;
-
-  thread *next = TAILQ_FIRST(&ready_queue);
-
-  if (!next) {
-    // Last thread standing — switch to cleanup_stack to free zombies safely
-    if (dying != &main_thread) {
-      thread_zombie_add(dying);
-    }
-    thread_switch_to_cleanup();
-  }
-
-  // Remove the next thread from the ready queue and switch to it
-  TAILQ_REMOVE(&ready_queue, next, entries);
-  current_thread = next;
-  current_thread->state = THREAD_RUNNING;
-
   if (dying != &main_thread) {
     thread_zombie_add(dying);
   }
+
+
+  thread *next = TAILQ_FIRST(&ready_queue);
+
+  if(dying->joined_by != NULL){
+    next = dying->joined_by;
+  }
+  if (!next) {
+    thread_switch_to_cleanup();
+  }
+  
+
+  if(next->state == THREAD_READY){
+    TAILQ_REMOVE(&ready_queue, next, entries);
+  }
+  // Remove the next thread from the ready queue and switch to it
+  // ps : thres a case where next is blocked, and not in the queue. this code still works
+  current_thread = next;
+  current_thread->state = THREAD_RUNNING;
 
   // Switch to the current_thread thread's context. Since the current thread is
   // terminating, we use setcontext instead of swapcontext (no need to
   // save the dying thread's context — we will never return to it).
   setcontext(&current_thread->context);
 
+  // no need for unblocking preemption here since we are exiting the thread and will never return to it
   // If setcontext returns, it failed. Exit with error.
   exit(1);
 }
@@ -242,19 +282,47 @@ int thread_join(thread_t thread_handle, void **retval) {
     cursor = cursor->joined_by;
   }
 
+  preem_block(); // Keep masked section focused on state/queue mutations
+
   // Mark the current thread as the joiner of the target thread
   target->joined_by = current_thread;
 
   // If the target is already terminated, process it immediately
-  while (target->state != THREAD_TERMINATED) {
-    thread_yield_to((thread_t)target);
+  if (target->state != THREAD_TERMINATED) {
+    current_thread->state = THREAD_BLOCKED;
+
+    // Park the current thread until the target terminates.
+    // We never switch directly to target here because it may not be READY.
+
+    while (target->state != THREAD_TERMINATED) {
+      if(target->state == THREAD_READY){
+        swap_thread(current_thread, target);
+        continue;
+      }
+
+      thread *prev = current_thread;
+      thread *next = TAILQ_FIRST(&ready_queue);
+
+      if (next == NULL) {
+        current_thread->state = THREAD_RUNNING;
+        preem_unblock();
+        errno = EDEADLK;
+        return -1;
+      }
+
+      swap_thread(prev, next);
+    }
+
+    current_thread->state = THREAD_RUNNING;
   }
+  preem_unblock();
 
   if (retval != NULL) {
     *retval = target->retval;
   }
 
   // Claim the zombie and return its stack to the pool
+  preem_block();
   if (target != &main_thread) {
     thread_zombie_remove(target);
     // Return stack to the pool
@@ -266,6 +334,8 @@ int thread_join(thread_t thread_handle, void **retval) {
     }
     free(target);
   }
+  preem_unblock();
+
 
   return 0;
 }
