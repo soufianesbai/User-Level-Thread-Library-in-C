@@ -54,14 +54,14 @@ int swap_thread(thread *prev, thread *next) {
 void preemption_handler(int sig) {
   (void)sig;
 
-  // Prevent nested scheduler entry if another timer signal arrives mid-yield.
-  if (in_preemption_handler) {
-    return;
-  }
+  // // Prevent nested scheduler entry if another timer signal arrives mid-yield.
+  // if (in_preemption_handler) {
+  //   return;
+  // }
 
-  in_preemption_handler = 1;
+  // in_preemption_handler = 1;
   thread_yield();
-  in_preemption_handler = 0;
+  // in_preemption_handler = 0;
 }
 
 /*
