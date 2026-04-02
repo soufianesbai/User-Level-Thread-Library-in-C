@@ -53,8 +53,7 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
     return -1;
   }
 
-  TAILQ_REMOVE(ready_queue, next,
-               entries);
+  TAILQ_REMOVE(ready_queue, next, entries);
 
   // Park current thread: BLOCKED state means thread_yield() won't pick it up
   prev->state = THREAD_BLOCKED;

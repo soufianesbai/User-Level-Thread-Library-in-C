@@ -32,6 +32,7 @@ thread *thread_get_current_thread(void) {
 void thread_set_current_thread(thread *t) {
   current_thread = t;
 }
+
 /*
   set current_thread to next as THREAD_RUNNING and switch context from prev to next.
 */
@@ -232,8 +233,14 @@ void thread_exit(void *retval) {
   thread *next = TAILQ_FIRST(&ready_queue);
 
   if (dying->joined_by != NULL) {
-    next = dying->joined_by;
+    thread *joiner = dying->joined_by;
+    joiner->state = THREAD_READY;
+    TAILQ_INSERT_HEAD(&ready_queue, joiner, entries); // HEAD = joiner has priority over other ready threads
+    // joiner will be the next to run, so we can switch to it directly without going through the scheduler loop again.
+    next = TAILQ_FIRST(&ready_queue);
+    TAILQ_REMOVE(&ready_queue, next, entries);
   }
+
   if (!next) {
     thread_switch_to_cleanup();
   }
@@ -294,29 +301,25 @@ int thread_join(thread_t thread_handle, void **retval) {
   // If the target is already terminated, process it immediately
   if (target->state != THREAD_TERMINATED) {
     current_thread->state = THREAD_BLOCKED;
+    preem_unblock();
 
     // Park the current thread until the target terminates.
     // We never switch directly to target here because it may not be READY.
 
     while (target->state != THREAD_TERMINATED) {
-      if (target->state == THREAD_READY) {
-        swap_thread(current_thread, target);
-        continue;
-      }
-
-      thread *prev = current_thread;
+      preem_block();
       thread *next = TAILQ_FIRST(&ready_queue);
-
       if (next == NULL) {
         current_thread->state = THREAD_RUNNING;
         preem_unblock();
         errno = EDEADLK;
         return -1;
       }
-
-      swap_thread(prev, next);
+      preem_unblock();
+      thread_yield();
     }
 
+    preem_block();
     current_thread->state = THREAD_RUNNING;
   }
   preem_unblock();
