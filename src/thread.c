@@ -19,7 +19,6 @@ static thread main_thread = {0, .state = THREAD_RUNNING, .joined_by = NULL};
 static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
-static volatile sig_atomic_t in_preemption_handler = 0;
 
 struct thread_queue *thread_get_ready_queue(void) {
   return &ready_queue;
@@ -48,7 +47,6 @@ int swap_thread(thread *prev, thread *next) {
 */
 void preemption_handler(int sig) {
   (void)sig;
-
   thread_yield();
 }
 
