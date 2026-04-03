@@ -81,9 +81,9 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     if (getcontext(&main_thread.context) == -1) {
       return -1;
     }
-    #ifdef ENABLE_PREEMPTION
+#ifdef ENABLE_PREEMPTION
     init_prem(preemption_handler, 5);
-    #endif
+#endif
     scheduler_initialized = 1;
   }
 
@@ -126,18 +126,17 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->context.uc_link = NULL;
   makecontext(&newth->context, thread_entry, 0);
 
-  
-  #ifdef PREEM_ENABLED
+#ifdef PREEM_ENABLED
   preem_block();
-  #endif
-   // Keep the critical section small: only shared scheduler state
+#endif
+  // Keep the critical section small: only shared scheduler state
   newth->id = next_thread_id++;
   TAILQ_INSERT_TAIL(&ready_queue, newth, entries);
   *newthread = (thread_t)newth;
 
-  #ifdef PREEM_ENABLED
+#ifdef PREEM_ENABLED
   preem_unblock();
-  #endif
+#endif
   return 0;
 }
 
@@ -146,19 +145,19 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
  * If no other thread is ready, returns immediately.
  */
 int thread_yield(void) {
-  
-  #ifdef PREEM_ENABLED
+
+#ifdef PREEM_ENABLED
   preem_block();
-  #endif
-   // Block first to avoid races with asynchronous preemption
+#endif
+  // Block first to avoid races with asynchronous preemption
 
   thread *next = TAILQ_FIRST(&ready_queue);
   if (!next) {
-    // No other thread is ready to run, so we just return and continue
-    // executing the current thread.
-    #ifdef PREEM_ENABLED
+// No other thread is ready to run, so we just return and continue
+// executing the current thread.
+#ifdef PREEM_ENABLED
     preem_unblock();
-    #endif
+#endif
     return 0;
   }
 
@@ -172,13 +171,13 @@ int thread_yield(void) {
   }
 
   swap_thread(prev, next);
-  // current_thread = next;
-  // next->state = THREAD_RUNNING;
+// current_thread = next;
+// next->state = THREAD_RUNNING;
 
-  // swapcontext(&prev->context, &next->context);
-  #ifdef PREEM_ENABLED
+// swapcontext(&prev->context, &next->context);
+#ifdef PREEM_ENABLED
   preem_unblock();
-  #endif
+#endif
   return 0;
 }
 
@@ -192,19 +191,18 @@ int thread_yield_to(thread_t target_handle) {
     return -1;
   }
 
-  
-  #ifdef PREEM_ENABLED
+#ifdef PREEM_ENABLED
   preem_block();
-  #endif
-   // Block first to avoid races with asynchronous preemption
+#endif
+  // Block first to avoid races with asynchronous preemption
 
   thread *target = (thread *)target_handle;
 
   // If the target thread is not ready, fallback to a normal yield
   if (target->state != THREAD_READY) {
-    #ifdef PREEM_ENABLED
+#ifdef PREEM_ENABLED
     preem_unblock();
-    #endif
+#endif
     return thread_yield();
   }
 
@@ -213,9 +211,9 @@ int thread_yield_to(thread_t target_handle) {
 
   swap_thread(prev, target);
 
-  #ifdef PREEM_ENABLED
+#ifdef PREEM_ENABLED
   preem_unblock();
-  #endif
+#endif
   return 0;
 }
 
@@ -231,11 +229,11 @@ int thread_yield_to(thread_t target_handle) {
  *     do_final_cleanup() can safely free any remaining zombies.
  */
 void thread_exit(void *retval) {
-  
-  #ifdef PREEM_ENABLED
+
+#ifdef PREEM_ENABLED
   preem_block();
-  #endif
-   // Block preemption while exiting the thread
+#endif
+  // Block preemption while exiting the thread
   current_thread->retval = retval;
   current_thread->state = THREAD_TERMINATED;
 
@@ -301,11 +299,10 @@ int thread_join(thread_t thread_handle, void **retval) {
     cursor = cursor->joined_by;
   }
 
-  
-  #ifdef PREEM_ENABLED
+#ifdef PREEM_ENABLED
   preem_block();
-  #endif
-   // Keep masked section focused on state/queue mutations
+#endif
+  // Keep masked section focused on state/queue mutations
 
   // Mark the current thread as the joiner of the target thread
   target->joined_by = current_thread;
@@ -328,9 +325,9 @@ int thread_join(thread_t thread_handle, void **retval) {
 
       if (next == NULL) {
         current_thread->state = THREAD_RUNNING;
-        #ifdef PREEM_ENABLED
+#ifdef PREEM_ENABLED
         preem_unblock();
-        #endif
+#endif
         errno = EDEADLK;
         return -1;
       }
@@ -340,19 +337,19 @@ int thread_join(thread_t thread_handle, void **retval) {
 
     current_thread->state = THREAD_RUNNING;
   }
-  #ifdef PREEM_ENABLED
+#ifdef PREEM_ENABLED
   preem_unblock();
-  #endif
+#endif
 
   if (retval != NULL) {
     *retval = target->retval;
   }
 
   // Claim the zombie and return its stack to the pool
-  
-  #ifdef PREEM_ENABLED
+
+#ifdef PREEM_ENABLED
   preem_block();
-  #endif
+#endif
 
   if (target != &main_thread) {
     thread_zombie_remove(target);
@@ -365,9 +362,9 @@ int thread_join(thread_t thread_handle, void **retval) {
     }
     free(target);
   }
-  #ifdef PREEM_ENABLED
+#ifdef PREEM_ENABLED
   preem_unblock();
-  #endif
+#endif
 
   return 0;
 }

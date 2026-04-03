@@ -2,8 +2,8 @@
 
 #include <signal.h>
 #include <stddef.h>
-#include <sys/time.h>
 #include <stdio.h>
+#include <sys/time.h>
 
 static struct itimerval timer;
 static struct sigaction sa;
