@@ -49,7 +49,13 @@ int swap_thread(thread *prev, thread *next) {
 void preemption_handler(int sig) {
   (void)sig;
 
+  if (in_preemption_handler) {
+    return;
+  }
+
+  in_preemption_handler = 1;
   thread_yield();
+  in_preemption_handler = 0;
 }
 
 /*
@@ -139,13 +145,17 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
  * If no other thread is ready, returns immediately.
  */
 int thread_yield(void) {
+  int called_from_handler = in_preemption_handler;
+
   preem_block(); // Block first to avoid races with asynchronous preemption
 
   thread *next = TAILQ_FIRST(&ready_queue);
   if (!next) {
     // No other thread is ready to run, so we just return and continue
     // executing the current thread.
-    preem_unblock();
+    if (!called_from_handler) {
+      preem_unblock();
+    }
     return 0;
   }
 
@@ -163,7 +173,9 @@ int thread_yield(void) {
   // next->state = THREAD_RUNNING;
 
   // swapcontext(&prev->context, &next->context);
-  preem_unblock();
+  if (!called_from_handler) {
+    preem_unblock();
+  }
   return 0;
 }
 
