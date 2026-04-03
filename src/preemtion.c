@@ -3,6 +3,7 @@
 #include <signal.h>
 #include <stddef.h>
 #include <sys/time.h>
+#include <stdio.h>
 
 static struct itimerval timer;
 static struct sigaction sa;
@@ -23,6 +24,7 @@ void preem_mask_init(void) {
 }
 
 int init_prem(void (*func)(int), int ms) {
+  printf("Initializing preemption with interval %d ms\n", ms);
   sa.sa_handler = func;
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = SA_RESTART; // auto-restart interrupted syscalls

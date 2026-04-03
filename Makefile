@@ -4,6 +4,7 @@ PYTHON ?= python3
 CFLAGS  = -Wall -Wextra -g -fPIC
 CPPFLAGS = -I$(INCLUDE_DIR)
 LDFLAGS = -lpthread
+RPATH_FLAGS = -Wl,-rpath,'$$ORIGIN/../lib:$$ORIGIN/..'
 
 # Directories
 SRC_DIR = src
@@ -18,17 +19,19 @@ COMPAT_HEADERS = thread.h pool.h
 SRC = $(wildcard $(SRC_DIR)/*.c)
 OBJ = $(patsubst $(SRC_DIR)/%.c, %.o, $(SRC))
 LIB = libthread.so
+LIB_PREEM = libthread_preem.so
 
 
 # List of tests (get all .c files in test/)
 TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
 TEST_BINS = $(patsubst $(TEST_DIR)/%.c, %, $(TEST_SRCS))
 TEST_BINS_PTHREAD = $(patsubst %, %-pthread, $(TEST_BINS))
+TEST_BINS_NORMAL = $(filter-out 71-preemption,$(TEST_BINS))
 FORMAT_SRCS = $(wildcard $(SRC_DIR)/*.c) $(wildcard $(INCLUDE_DIR)/*.h) $(wildcard $(TEST_DIR)/*.c) $(wildcard $(TEST_DIR)/*.h)
 
 # --- Main targets ---
 
-all: compat-headers $(LIB) tests 
+all: compat-headers $(LIB) $(LIB_PREEM) tests preemptive-tests pthreads
 
 compat-headers: $(COMPAT_HEADERS)
 
@@ -43,12 +46,23 @@ $(LIB): $(SRC)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -shared -o $@ $^
 
 
-# Build tests with custom thread library
+# Build the preemption-enabled shared library (.so)
+$(LIB_PREEM): $(SRC)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DENABLE_PREEMPTION -DPREEM_ENABLED -shared -o $@ $^
+
+
+# Build tests with the standard thread library
 tests: compat-headers $(LIB)
 	@mkdir -p bin
-	@for t in $(TEST_BINS); do \
-		$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_DIR)/$$t.c $(SRC) -o bin/$$t $(LDFLAGS); \
+	@for t in $(TEST_BINS_NORMAL); do \
+		$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_DIR)/$$t.c -L. -lthread $(RPATH_FLAGS) -o bin/$$t $(LDFLAGS); \
 	done
+
+
+# Build 71-preemption with the preemption-enabled library
+preemptive-tests: compat-headers $(LIB_PREEM)
+	@mkdir -p bin
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_DIR)/71-preemption.c -L. -lthread_preem $(RPATH_FLAGS) -o bin/71-preemption $(LDFLAGS)
 
 
 # Build tests with pthreads (-DUSE_PTHREAD)
@@ -65,6 +79,7 @@ pthreads: compat-headers
 install: all pthreads
 	@mkdir -p $(LIB_DIR) $(BIN_DIR)
 	cp $(LIB) $(LIB_DIR)/
+	cp $(LIB_PREEM) $(LIB_DIR)/
 	cp bin/* $(BIN_DIR)/
 	@echo "Installation terminée dans ./$(INSTALL_DIR)"
 
@@ -86,4 +101,4 @@ graphs: all pthreads
 format:
 	$(CLANG_FORMAT) -i $(FORMAT_SRCS)
 
-.PHONY: all tests pthreads clang install valgrind clean graphs format clang-format bench-plot bench-plot-quick
+.PHONY: all tests preemptive-tests pthreads clang install valgrind clean graphs format clang-format bench-plot bench-plot-quick
