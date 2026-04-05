@@ -15,3 +15,5 @@ build/*
 install/*
 bin/*
 
+thread.h
+pool.h
