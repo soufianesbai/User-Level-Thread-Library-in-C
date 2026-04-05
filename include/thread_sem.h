@@ -6,8 +6,8 @@
 #ifndef USE_PTHREAD
 
 typedef struct {
-    int count;
-    struct thread_queue waiting_queue;
+  int count;                         // Number of available resources
+  struct thread_queue waiting_queue; // Queue of threads waiting for the semaphore
 } thread_sem_t;
 
 int thread_sem_init(thread_sem_t *sem, int value);
@@ -25,6 +25,6 @@ int thread_sem_destroy(thread_sem_t *sem);
 #define thread_sem_post sem_post
 #define thread_sem_destroy sem_destroy
 
-#endif
+#endif // USE_PTHREAD
 
-#endif
+#endif // THREAD_SEM_H

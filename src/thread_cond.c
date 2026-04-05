@@ -34,7 +34,7 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
   if (cond == NULL || mutex == NULL)
     return -1;
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
 
@@ -57,7 +57,7 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
 
   if (next == NULL) {
     // Aucun thread prêt — on ne peut pas se bloquer sans deadlock
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
     // Réacquiert le mutex avant de retourner en erreur
@@ -77,7 +77,7 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
   // Quand on revient ici, signal/broadcast nous a remis dans la ready_queue
   // et on a été re-sélectionné par le scheduler.
   // Il faut réacquérir le mutex avant de retourner.
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
 
@@ -95,7 +95,7 @@ int thread_cond_signal(thread_cond_t *cond) {
   if (cond == NULL)
     return -1;
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
 
@@ -107,7 +107,7 @@ int thread_cond_signal(thread_cond_t *cond) {
     TAILQ_INSERT_TAIL(ready_queue, revived, entries);
   }
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
   return 0;
@@ -121,7 +121,7 @@ int thread_cond_broadcast(thread_cond_t *cond) {
   if (cond == NULL)
     return -1;
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
 
@@ -134,7 +134,7 @@ int thread_cond_broadcast(thread_cond_t *cond) {
     TAILQ_INSERT_TAIL(ready_queue, revived, entries);
   }
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
   return 0;

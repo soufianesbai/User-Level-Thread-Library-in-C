@@ -6,7 +6,7 @@
 #ifndef USE_PTHREAD
 
 typedef struct {
-    struct thread_queue waiting_queue;
+  struct thread_queue waiting_queue;
 } thread_cond_t;
 
 int thread_cond_init(thread_cond_t *cond);

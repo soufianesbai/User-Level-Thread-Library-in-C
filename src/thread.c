@@ -19,7 +19,6 @@ static thread main_thread = {0, .state = THREAD_RUNNING, .joined_by = NULL};
 static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
-static volatile sig_atomic_t in_preemption_handler = 0;
 
 struct thread_queue *thread_get_ready_queue(void) {
   return &ready_queue;
@@ -32,16 +31,20 @@ thread *thread_get_current_thread(void) {
 void thread_set_current_thread(thread *t) {
   current_thread = t;
 }
+
 /*
+
   set current_thread to next as THREAD_RUNNING and switch context from prev to next.
 */
 int swap_thread(thread *prev, thread *next) {
-  // utile to avoid duplicated code
-  TAILQ_REMOVE(&ready_queue, next, entries);
+  if (next->state == THREAD_READY) {
+    TAILQ_REMOVE(&ready_queue, next, entries);
+  }
   current_thread = next;
   next->state = THREAD_RUNNING;
   return swapcontext(&prev->context, &next->context);
 }
+
 /*
   a wrapper for the preemption signal handler that just yields the current thread.
   sigaction take an func(int) not a func(void)
@@ -73,6 +76,11 @@ thread_t thread_self(void) {
  * Returns 0 on success, -1 on error.
  */
 int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
+  if (newthread == NULL || func == NULL) {
+    errno = EINVAL; // Invalid argument
+    return -1;
+  }
+
   if (!scheduler_initialized) {
     TAILQ_INIT(&ready_queue);
     thread_cleanup_register();
@@ -85,11 +93,6 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     init_prem(preemption_handler, 5);
 #endif
     scheduler_initialized = 1;
-  }
-
-  if (newthread == NULL || func == NULL) {
-    errno = EINVAL; // Invalid argument
-    return -1;
   }
 
   thread *newth = malloc(sizeof(*newth));
@@ -126,7 +129,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->context.uc_link = NULL;
   makecontext(&newth->context, thread_entry, 0);
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
   // Keep the critical section small: only shared scheduler state
@@ -134,7 +137,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   TAILQ_INSERT_TAIL(&ready_queue, newth, entries);
   *newthread = (thread_t)newth;
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
   return 0;
@@ -146,7 +149,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
  */
 int thread_yield(void) {
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
   // Block first to avoid races with asynchronous preemption
@@ -155,7 +158,7 @@ int thread_yield(void) {
   if (!next) {
 // No other thread is ready to run, so we just return and continue
 // executing the current thread.
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
     return 0;
@@ -165,17 +168,13 @@ int thread_yield(void) {
 
   if (prev->state == THREAD_RUNNING) {
     prev->state = THREAD_READY;
-    TAILQ_INSERT_TAIL(&ready_queue,
-                      prev,
-                      entries); // Put the current thread back in the ready queue
+    // Put the current thread back in the ready queue
+    TAILQ_INSERT_TAIL(&ready_queue, prev, entries);
   }
 
   swap_thread(prev, next);
-// current_thread = next;
-// next->state = THREAD_RUNNING;
 
-// swapcontext(&prev->context, &next->context);
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
   return 0;
@@ -191,27 +190,27 @@ int thread_yield_to(thread_t target_handle) {
     return -1;
   }
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
-  // Block first to avoid races with asynchronous preemption
 
   thread *target = (thread *)target_handle;
 
   // If the target thread is not ready, fallback to a normal yield
   if (target->state != THREAD_READY) {
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
     return thread_yield();
   }
 
   thread *prev = current_thread;
+  prev->state = THREAD_READY;
   TAILQ_INSERT_TAIL(&ready_queue, prev, entries);
 
   swap_thread(prev, target);
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
   return 0;
@@ -223,49 +222,54 @@ int thread_yield_to(thread_t target_handle) {
  *
  * Memory management strategy:
  *   - not yet joined at exit time: a future thread_join() may still need
- * retval. We add to the zombie queue so the struct survives until thread_join()
- * claims it or free_zombies() cleans it at program exit.
+ *     retval. We add to the zombie queue so the struct survives until
+ *     thread_join() claims it or free_zombies() cleans it at program exit.
  *   - Last thread standing: switch to the neutral cleanup_stack so that
  *     do_final_cleanup() can safely free any remaining zombies.
+ *
+ * Wakeup strategy:
+ *   - If another thread is blocked in thread_join() waiting for us,
+ *     we put it back in the ready queue before switching away.
+ *     This guarantees the joiner is woken up exactly once, by us,
+ *     eliminating the need for a polling loop in thread_join().
  */
 void thread_exit(void *retval) {
-
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
-  // Block preemption while exiting the thread
+
   current_thread->retval = retval;
   current_thread->state = THREAD_TERMINATED;
 
   thread *dying = current_thread;
+  // Non-main threads go to the zombie queue so thread_join() can
+  // still read their retval. The main thread's struct is static —
+  // it never needs to be freed, so we skip zombification.
   if (dying != &main_thread) {
     thread_zombie_add(dying);
   }
 
+  // If a thread was waiting on this one, unblock it now
+  // by putting it back in the ready queue.
+  if (dying->joined_by != NULL) {
+    thread *joiner = dying->joined_by;
+    joiner->state = THREAD_READY;
+    TAILQ_INSERT_TAIL(&ready_queue, joiner, entries);
+  }
+
+  // Pick the next thread normally via FIFO — no special case needed.
+  // The joiner (if any) is already in the queue at this point.
   thread *next = TAILQ_FIRST(&ready_queue);
 
-  if (dying->joined_by != NULL) {
-    next = dying->joined_by;
-  }
-  if (!next) {
+  if (next == NULL) {
     thread_switch_to_cleanup();
   }
 
-  if (next->state == THREAD_READY) {
-    TAILQ_REMOVE(&ready_queue, next, entries);
-  }
-  // Remove the next thread from the ready queue and switch to it
-  // ps : thres a case where next is blocked, and not in the queue. this code still works
+  TAILQ_REMOVE(&ready_queue, next, entries);
   current_thread = next;
   current_thread->state = THREAD_RUNNING;
-
-  // Switch to the current_thread thread's context. Since the current thread is
-  // terminating, we use setcontext instead of swapcontext (no need to
-  // save the dying thread's context — we will never return to it).
   setcontext(&current_thread->context);
 
-  // no need for unblocking preemption here since we are exiting the thread and will never return to
-  // it If setcontext returns, it failed. Exit with error.
   exit(1);
 }
 
@@ -273,6 +277,12 @@ void thread_exit(void *retval) {
  * thread_join — waits for the given thread to terminate.
  * Places the thread's return value in *retval (if non-NULL).
  * Returns 0 on success, -1 on error.
+ *
+ * Blocking strategy:
+ *   - If the target is not yet terminated, the current thread is marked
+ *     BLOCKED and yields exactly once. It will be re-inserted into the
+ *     ready queue by thread_exit() when the target terminates.
+ *   - This guarantees the joiner wakes up exactly once, with no polling.
  */
 int thread_join(thread_t thread_handle, void **retval) {
   if (thread_handle == NULL) {
@@ -288,8 +298,11 @@ int thread_join(thread_t thread_handle, void **retval) {
     return -1;
   }
 
-  // Deadlock check: current thread cannot join a thread that it is already
-  // waiting on (directly or transitively).
+  // Deadlock check: detect if target is already (directly or transitively)
+  // waiting on current_thread, which would create a cycle.
+  // Note: this only detects cycles already formed via joined_by chains.
+  // It does NOT detect future cycles (e.g. target has not yet joined
+  // anyone at this point). This covers the common case tested by 81-deadlock.
   thread *cursor = current_thread;
   while (cursor != NULL) {
     if (cursor == target) {
@@ -299,45 +312,39 @@ int thread_join(thread_t thread_handle, void **retval) {
     cursor = cursor->joined_by;
   }
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
-  // Keep masked section focused on state/queue mutations
 
-  // Mark the current thread as the joiner of the target thread
+  // Mark the current thread as the joiner of the target
   target->joined_by = current_thread;
 
-  // If the target is already terminated, process it immediately
   if (target->state != THREAD_TERMINATED) {
     current_thread->state = THREAD_BLOCKED;
 
-    // Park the current thread until the target terminates.
-    // We never switch directly to target here because it may not be READY.
+    thread *prev = current_thread;
+    thread *next = TAILQ_FIRST(&ready_queue);
 
-    while (target->state != THREAD_TERMINATED) {
-      if (target->state == THREAD_READY) {
-        swap_thread(current_thread, target);
-        continue;
-      }
-
-      thread *prev = current_thread;
-      thread *next = TAILQ_FIRST(&ready_queue);
-
-      if (next == NULL) {
-        current_thread->state = THREAD_RUNNING;
-#ifdef PREEM_ENABLED
-        preem_unblock();
+    if (next == NULL) {
+      // Nobody else to run → real deadlock
+      current_thread->state = THREAD_RUNNING;
+#ifdef ENABLE_PREEMPTION
+      preem_unblock();
 #endif
-        errno = EDEADLK;
-        return -1;
-      }
-
-      swap_thread(prev, next);
+      errno = EDEADLK;
+      return -1;
     }
 
+    // Yield exactly once. We will return here only when thread_exit()
+    // of target puts us back into the ready queue.
+    swap_thread(prev, next);
+
+    // At this point, target->state == THREAD_TERMINATED is guaranteed
+    // by the wakeup invariant in thread_exit().
     current_thread->state = THREAD_RUNNING;
   }
-#ifdef PREEM_ENABLED
+
+#ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
 
@@ -346,14 +353,12 @@ int thread_join(thread_t thread_handle, void **retval) {
   }
 
   // Claim the zombie and return its stack to the pool
-
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
 
   if (target != &main_thread) {
     thread_zombie_remove(target);
-    // Return stack to the pool
     if (target->stack_map != NULL) {
       struct stack_entry entry = {.map = target->stack_map,
                                   .stack = target->context.uc_stack.ss_sp,
@@ -362,7 +367,8 @@ int thread_join(thread_t thread_handle, void **retval) {
     }
     free(target);
   }
-#ifdef PREEM_ENABLED
+
+#ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
 

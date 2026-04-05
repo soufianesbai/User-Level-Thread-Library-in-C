@@ -5,6 +5,13 @@
 #include <sys/queue.h>
 #include <ucontext.h>
 
+/*
+ * thread_sem_init — Initialize a semaphore.
+ *
+ * value : number of available resources (must be >= 0).
+ *
+ * Returns 0 on success, -1 on error.
+ */
 int thread_sem_init(thread_sem_t *sem, int value) {
   if (sem == NULL || value < 0)
     return -1;
@@ -16,28 +23,30 @@ int thread_sem_init(thread_sem_t *sem, int value) {
 int thread_sem_destroy(thread_sem_t *sem) {
   if (sem == NULL || !TAILQ_EMPTY(&sem->waiting_queue))
     return -1;
+  sem->count = 0;
+  sem = NULL;
   return 0;
 }
 
 /*
- * thread_sem_wait — P() operation (décrémente).
+ * thread_sem_wait — P() operation (decrement).
  *
- * Si count > 0 : décrémente et continue immédiatement.
- * Si count == 0 : bloque le thread courant dans la waiting_queue jusqu'à
- * ce qu'un thread_sem_post() le réveille.
+ * If count > 0 : decrement and continue immediately.
+ * If count == 0 : block the current thread in the waiting_queue until
+ * a thread_sem_post() wakes it up.
  */
 int thread_sem_wait(thread_sem_t *sem) {
   if (sem == NULL)
     return -1;
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
 
   if (sem->count > 0) {
     // Fast path : la ressource est disponible
     sem->count--;
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
     return 0;
@@ -50,7 +59,7 @@ int thread_sem_wait(thread_sem_t *sem) {
 
   if (next == NULL) {
     // Aucun thread ne peut faire un post() — deadlock
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
     return -1;
@@ -66,7 +75,7 @@ int thread_sem_wait(thread_sem_t *sem) {
   swapcontext(&prev->context, &next->context);
 
   // Quand on revient ici, post() nous a réveillés et a déjà décrémenté count.
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
   return 0;
@@ -83,7 +92,7 @@ int thread_sem_post(thread_sem_t *sem) {
   if (sem == NULL)
     return -1;
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
 
@@ -99,7 +108,7 @@ int thread_sem_post(thread_sem_t *sem) {
     sem->count++;
   }
 
-#ifdef PREEM_ENABLED
+#ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
   return 0;
