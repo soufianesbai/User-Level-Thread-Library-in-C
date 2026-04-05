@@ -50,17 +50,7 @@ int swap_thread(thread *prev, thread *next) {
 */
 void preemption_handler(int sig) {
   (void)sig;
-
-  // Guard against re-entrant signals: if a SIGALRM fires while we are
-  // already inside this handler, ignore it.
-  static volatile sig_atomic_t in_handler = 0;
-  if (in_handler)
-    return;
-  in_handler = 1;
-
   thread_yield();
-
-  in_handler = 0;
 }
 
 /*
@@ -175,10 +165,12 @@ int thread_yield(void) {
 
   thread *prev = current_thread;
 
-  // prev must be either RUNNING (normal yield) or BLOCKED (called from
-  // thread_join). Any other state indicates a scheduler bug.
-  assert(prev->state == THREAD_RUNNING || prev->state == THREAD_BLOCKED);
-
+  if (prev->state == THREAD_TERMINATED) {
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
+    return 0;
+  }
   if (prev->state == THREAD_RUNNING) {
     prev->state = THREAD_READY;
     // Put the current thread back in the ready queue
