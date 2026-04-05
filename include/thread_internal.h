@@ -21,6 +21,7 @@ typedef struct thread {
   unsigned valgrind_stack_id;  // Valgrind stack ID for memory checking
   void *stack_map;             // Mapped memory for stack (for reuse in pool)
   struct thread *joined_by;    // The thread that is joining on this thread (if any)
+  struct thread *waiting_for;  // The thread that is waiting for this thread to terminate (if any)
 } thread;
 
 void thread_cleanup_register(void);
@@ -30,5 +31,6 @@ void thread_zombie_remove(thread *t);
 struct thread_queue *thread_get_ready_queue(void);
 thread *thread_get_current_thread(void);
 void thread_set_current_thread(thread *t);
+int swap_thread(thread *prev, thread *next);
 
 #endif // THREAD_INTERNAL_H

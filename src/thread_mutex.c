@@ -1,8 +1,8 @@
 #include "preemption.h"
 #include "thread_internal.h"
+#include <errno.h>
 #include <stddef.h>
 #include <sys/queue.h>
-#include <ucontext.h>
 
 int thread_mutex_init(thread_mutex_t *mutex) {
   if (mutex == NULL)
@@ -17,6 +17,7 @@ int thread_mutex_destroy(thread_mutex_t *mutex) {
     // Do not destroy a mutex if threads are still waiting on it
     return -1;
   }
+  mutex->locked = -1;
   return 0;
 }
 
@@ -32,9 +33,18 @@ int thread_mutex_destroy(thread_mutex_t *mutex) {
 int thread_mutex_lock(thread_mutex_t *mutex) {
   if (mutex == NULL)
     return -1;
+
 #ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
+
+  if (mutex->locked == -1) {
+    errno = EINVAL;
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
+    return -1;
+  }
 
   if (!mutex->locked) {
     // Fast path: mutex is free, acquire it immediately
@@ -51,22 +61,18 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
   thread *prev = thread_get_current_thread();
   thread *next = TAILQ_FIRST(ready_queue);
   if (next == NULL) {
-    // No other thread can unlock the mutex — deadlock
+    // No other thread is ready to run — cannot proceed without risking livelock
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
     return -1;
   }
 
-  TAILQ_REMOVE(ready_queue, next, entries);
-
   // Park current thread: BLOCKED state means thread_yield() won't pick it up
   prev->state = THREAD_BLOCKED;
   TAILQ_INSERT_TAIL(&mutex->waiting_queue, prev, entries);
 
-  thread_set_current_thread(next);
-  next->state = THREAD_RUNNING;
-  swapcontext(&prev->context, &next->context);
+  swap_thread(prev, next);
 #ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
@@ -90,6 +96,14 @@ int thread_mutex_unlock(thread_mutex_t *mutex) {
 #ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
+
+  if (mutex->locked == -1) {
+    errno = EINVAL;
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
+    return -1;
+  }
 
   if (!mutex->locked) {
     // Cannot unlock a mutex that is not locked

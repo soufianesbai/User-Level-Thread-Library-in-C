@@ -15,7 +15,7 @@ static struct thread_queue ready_queue;
 
 // The main thread is initialized at the start of the program and will be used
 // as the initial context for the main execution flow.
-static thread main_thread = {0, .state = THREAD_RUNNING, .joined_by = NULL};
+static thread main_thread = {0, .state = THREAD_RUNNING, .joined_by = NULL, .waiting_for = NULL};
 static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
@@ -33,7 +33,6 @@ void thread_set_current_thread(thread *t) {
 }
 
 /*
-
   set current_thread to next as THREAD_RUNNING and switch context from prev to next.
 */
 int swap_thread(thread *prev, thread *next) {
@@ -52,7 +51,16 @@ int swap_thread(thread *prev, thread *next) {
 void preemption_handler(int sig) {
   (void)sig;
 
+  // Guard against re-entrant signals: if a SIGALRM fires while we are
+  // already inside this handler, ignore it.
+  static volatile sig_atomic_t in_handler = 0;
+  if (in_handler)
+    return;
+  in_handler = 1;
+
   thread_yield();
+
+  in_handler = 0;
 }
 
 /*
@@ -116,6 +124,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->stack_map = stack_entry.map;
   newth->valgrind_stack_id = stack_entry.valgrind_id;
   newth->joined_by = NULL;
+  newth->waiting_for = NULL;
 
   if (getcontext(&newth->context) == -1) {
     free(newth);
@@ -165,6 +174,10 @@ int thread_yield(void) {
   }
 
   thread *prev = current_thread;
+
+  // prev must be either RUNNING (normal yield) or BLOCKED (called from
+  // thread_join). Any other state indicates a scheduler bug.
+  assert(prev->state == THREAD_RUNNING || prev->state == THREAD_BLOCKED);
 
   if (prev->state == THREAD_RUNNING) {
     prev->state = THREAD_READY;
@@ -283,6 +296,11 @@ void thread_exit(void *retval) {
  *     BLOCKED and yields exactly once. It will be re-inserted into the
  *     ready queue by thread_exit() when the target terminates.
  *   - This guarantees the joiner wakes up exactly once, with no polling.
+ *
+ * Deadlock detection:
+ *   - Follows the waiting_for chain from target. If current_thread is
+ *     reached, joining would create a cycle → EDEADLK.
+ *   - O(cycle length), correct for cycles of any length.
  */
 int thread_join(thread_t thread_handle, void **retval) {
   if (thread_handle == NULL) {
@@ -298,18 +316,15 @@ int thread_join(thread_t thread_handle, void **retval) {
     return -1;
   }
 
-  // Deadlock check: detect if target is already (directly or transitively)
-  // waiting on current_thread, which would create a cycle.
-  // Note: this only detects cycles already formed via joined_by chains.
-  // It does NOT detect future cycles (e.g. target has not yet joined
-  // anyone at this point). This covers the common case tested by 81-deadlock.
-  thread *cursor = current_thread;
+  // Deadlock check: follow waiting_for from target.
+  // If we reach current_thread, joining would create a cycle.
+  thread *cursor = target;
   while (cursor != NULL) {
-    if (cursor == target) {
+    if (cursor == current_thread) {
       errno = EDEADLK;
       return EDEADLK;
     }
-    cursor = cursor->joined_by;
+    cursor = cursor->waiting_for;
   }
 
 #ifdef ENABLE_PREEMPTION
@@ -321,6 +336,7 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   if (target->state != THREAD_TERMINATED) {
     current_thread->state = THREAD_BLOCKED;
+    current_thread->waiting_for = target;
 
     thread *prev = current_thread;
     thread *next = TAILQ_FIRST(&ready_queue);
@@ -328,6 +344,7 @@ int thread_join(thread_t thread_handle, void **retval) {
     if (next == NULL) {
       // Nobody else to run → real deadlock
       current_thread->state = THREAD_RUNNING;
+      current_thread->waiting_for = NULL;
 #ifdef ENABLE_PREEMPTION
       preem_unblock();
 #endif
@@ -341,6 +358,7 @@ int thread_join(thread_t thread_handle, void **retval) {
 
     // At this point, target->state == THREAD_TERMINATED is guaranteed
     // by the wakeup invariant in thread_exit().
+    current_thread->waiting_for = NULL;
     current_thread->state = THREAD_RUNNING;
   }
 
