@@ -73,7 +73,15 @@ void thread_scheduler_enqueue(thread *t) {
  *   (already ordered by enqueue, so just return first)
  */
 thread *thread_scheduler_pick_next(void) {
-  return TAILQ_FIRST(&ready_queue);
+  if (TAILQ_EMPTY(&ready_queue))
+    return NULL;
+
+  thread *next = TAILQ_FIRST(&ready_queue);
+
+  TAILQ_REMOVE(&ready_queue, next, entries);
+  next->in_ready_queue = 0;
+
+  return next;
 }
 
 /*
@@ -226,9 +234,6 @@ int thread_yield(void) {
     return 0;
   }
 
-  TAILQ_REMOVE(&ready_queue, next, entries);
-  next->in_ready_queue = 0;
-
 #if THREAD_SCHED_POLICY == THREAD_SCHED_PRIO
 
   // Décision: switch seulement si meilleur
@@ -284,11 +289,6 @@ int thread_yield_to(thread_t target_handle) {
   thread *prev = current_thread;
   prev->state = THREAD_READY;
   thread_scheduler_enqueue(prev);
-
-  if (target->in_ready_queue) {
-    TAILQ_REMOVE(&ready_queue, target, entries);
-    target->in_ready_queue = 0;
-  }
 
   swap_thread(prev, target);
 
@@ -420,9 +420,6 @@ int thread_join(thread_t thread_handle, void **retval) {
       errno = EDEADLK;
       return -1;
     }
-
-    TAILQ_REMOVE(&ready_queue, next, entries);
-    next->in_ready_queue = 0;
 
     // Yield exactly once. We will return here only when thread_exit()
     // of target puts us back into the ready queue.
