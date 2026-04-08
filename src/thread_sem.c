@@ -55,7 +55,7 @@ int thread_sem_wait(thread_sem_t *sem) {
   // Slow path : on se bloque jusqu'à ce qu'un post() nous réveille
   struct thread_queue *ready_queue = thread_get_ready_queue();
   thread *prev = thread_get_current_thread();
-  thread *next = TAILQ_FIRST(ready_queue);
+  thread *next = thread_scheduler_pick_next();
 
   if (next == NULL) {
     // Aucun thread ne peut faire un post() — deadlock
@@ -99,11 +99,10 @@ int thread_sem_post(thread_sem_t *sem) {
   if (!TAILQ_EMPTY(&sem->waiting_queue)) {
     // Transfert direct : le thread réveillé obtient la ressource,
     // count ne change pas (même logique que mutex_unlock).
-    struct thread_queue *ready_queue = thread_get_ready_queue();
     thread *revived = TAILQ_FIRST(&sem->waiting_queue);
     TAILQ_REMOVE(&sem->waiting_queue, revived, entries);
     revived->state = THREAD_READY;
-    TAILQ_INSERT_TAIL(ready_queue, revived, entries);
+    thread_scheduler_enqueue(revived);
   } else {
     sem->count++;
   }

@@ -58,9 +58,8 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
 
   // Slow path: park current thread in waiting queue until unlock() wakes us.
   // We will return here with the mutex already owned (locked stays 1).
-  struct thread_queue *ready_queue = thread_get_ready_queue();
   thread *prev = thread_get_current_thread();
-  thread *next = TAILQ_FIRST(ready_queue);
+  thread *next = thread_scheduler_pick_next();
   if (next == NULL) {
     // No other thread is ready to run — cannot proceed without risking livelock
 #ifdef ENABLE_PREEMPTION
@@ -117,11 +116,10 @@ int thread_mutex_unlock(thread_mutex_t *mutex) {
   if (!TAILQ_EMPTY(&mutex->waiting_queue)) {
     // Transfer ownership directly: the revived thread becomes the new owner.
     // locked stays 1 — no window where another thread could steal the mutex.
-    struct thread_queue *ready_queue = thread_get_ready_queue();
     thread *revived = TAILQ_FIRST(&mutex->waiting_queue);
     TAILQ_REMOVE(&mutex->waiting_queue, revived, entries);
     revived->state = THREAD_READY;
-    TAILQ_INSERT_TAIL(ready_queue, revived, entries);
+    thread_scheduler_enqueue(revived);
     // locked intentionally stays at 1
   } else {
     mutex->locked = 0;

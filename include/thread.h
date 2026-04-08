@@ -1,6 +1,17 @@
 #ifndef __THREAD_H__
 #define __THREAD_H__
 
+#define THREAD_SCHED_FIFO 0
+#define THREAD_SCHED_PRIO 1
+#define THREAD_DEFAULT_PRIORITY 10
+#define THREAD_MAX_PRIORITY 100
+#define THREAD_MIN_PRIORITY 0
+#define THREAD_AGING 2
+#define THREAD_WAIT 1
+#ifndef THREAD_SCHED_POLICY
+#define THREAD_SCHED_POLICY THREAD_SCHED_FIFO
+#endif
+
 #ifndef USE_PTHREAD
 
 #include <sys/queue.h>
@@ -58,6 +69,9 @@ int thread_mutex_destroy(thread_mutex_t *mutex);
 int thread_mutex_lock(thread_mutex_t *mutex);
 int thread_mutex_unlock(thread_mutex_t *mutex);
 
+int thread_set_priority(thread_t t, int prio);
+
+
 #else /* USE_PTHREAD */
 
 /* Si on compile avec -DUSE_PTHREAD, ce sont les pthreads qui sont utilisés */
@@ -69,6 +83,7 @@ int thread_mutex_unlock(thread_mutex_t *mutex);
 #define thread_yield sched_yield
 #define thread_join pthread_join
 #define thread_exit pthread_exit
+#define thread_set_priority(t, prio)  ((void)(t), (void)(prio), (void)0)
 
 /* Interface possible pour les mutex */
 #define thread_mutex_t pthread_mutex_t

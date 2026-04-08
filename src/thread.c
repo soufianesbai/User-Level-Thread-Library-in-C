@@ -15,7 +15,11 @@ static struct thread_queue ready_queue;
 
 // The main thread is initialized at the start of the program and will be used
 // as the initial context for the main execution flow.
-static thread main_thread = {0, .state = THREAD_RUNNING, .joined_by = NULL, .waiting_for = NULL};
+static thread main_thread = {0,
+                             .state = THREAD_RUNNING,
+                             .joined_by = NULL,
+                             .priority = THREAD_DEFAULT_PRIORITY,
+                             .waiting_for = NULL};
 static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
@@ -33,12 +37,49 @@ void thread_set_current_thread(thread *t) {
 }
 
 /*
+ * thread_scheduler_enqueue — adds a thread to the ready queue.
+ * - If THREAD_SCHED_POLICY is FIFO: appends at the end (FIFO order)
+ * - If THREAD_SCHED_POLICY is PRIO: inserts by priority (higher priority first)
+ */
+void thread_scheduler_enqueue(thread *t) {
+  if (t == NULL || t->in_ready_queue)
+    return;
+#if THREAD_SCHED_POLICY == THREAD_SCHED_FIFO
+  // FIFO: just append at the end
+  t->in_ready_queue = 1;
+  TAILQ_INSERT_TAIL(&ready_queue, t, entries);
+#elif THREAD_SCHED_POLICY == THREAD_SCHED_PRIO
+  // Priority: insert in descending order of priority
+  thread *cursor;
+  TAILQ_FOREACH(cursor, &ready_queue, entries) {
+    if (t->priority > cursor->priority) {
+      // printf("Inserting thread %d with priority %d before thread %d with priority %d\n",
+      //        t->id, t->priority, cursor->id, cursor->priority);
+      t->in_ready_queue = 1;
+      TAILQ_INSERT_BEFORE(cursor, t, entries);
+      return;
+    }
+  }
+  t->in_ready_queue = 1;
+  // If not inserted before any thread, add at the end
+  TAILQ_INSERT_TAIL(&ready_queue, t, entries);
+#endif
+}
+
+/*
+ * thread_scheduler_pick_next — gets the next thread to run.
+ * - If THREAD_SCHED_POLICY is FIFO: returns the first ready thread
+ * - If THREAD_SCHED_POLICY is PRIO: returns the highest priority thread
+ *   (already ordered by enqueue, so just return first)
+ */
+thread *thread_scheduler_pick_next(void) {
+  return TAILQ_FIRST(&ready_queue);
+}
+
+/*
   set current_thread to next as THREAD_RUNNING and switch context from prev to next.
 */
 int swap_thread(thread *prev, thread *next) {
-  if (next->state == THREAD_READY) {
-    TAILQ_REMOVE(&ready_queue, next, entries);
-  }
   current_thread = next;
   next->state = THREAD_RUNNING;
   return swapcontext(&prev->context, &next->context);
@@ -113,6 +154,8 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->retval = NULL;
   newth->stack_map = stack_entry.map;
   newth->valgrind_stack_id = stack_entry.valgrind_id;
+  newth->priority = THREAD_DEFAULT_PRIORITY;
+  newth->in_ready_queue = 0;
   newth->joined_by = NULL;
   newth->waiting_for = NULL;
 
@@ -133,7 +176,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
 #endif
   // Keep the critical section small: only shared scheduler state
   newth->id = next_thread_id++;
-  TAILQ_INSERT_TAIL(&ready_queue, newth, entries);
+  thread_scheduler_enqueue(newth);
   *newthread = (thread_t)newth;
 
 #ifdef ENABLE_PREEMPTION
@@ -144,39 +187,68 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
 
 /*
  * thread_yield — yields the CPU to another ready thread.
- * If no other thread is ready, returns immediately.
+ * In priority mode, only yields if there's a higher priority thread ready.
+ * If no other thread is ready (or no higher priority thread), returns immediately.
  */
 int thread_yield(void) {
-
 #ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
-  // Block first to avoid races with asynchronous preemption
-
-  thread *next = TAILQ_FIRST(&ready_queue);
-  if (!next) {
-// No other thread is ready to run, so we just return and continue
-// executing the current thread.
-#ifdef ENABLE_PREEMPTION
-    preem_unblock();
-#endif
-    return 0;
-  }
 
   thread *prev = current_thread;
 
-  if (prev->state == THREAD_TERMINATED) {
+#if THREAD_SCHED_POLICY == THREAD_SCHED_PRIO
+
+  // Aging: tous les threads en attente gagnent de la priorité
+  thread *t;
+  TAILQ_FOREACH(t, &ready_queue, entries) {
+    t->priority += THREAD_WAIT;
+    if (t->priority > THREAD_MAX_PRIORITY)
+      t->priority = THREAD_MAX_PRIORITY;
+  }
+
+  // Pénalité sur le thread courant
+  if (prev->state == THREAD_RUNNING) {
+    prev->priority -= THREAD_AGING;
+    if (prev->priority < THREAD_MIN_PRIORITY)
+      prev->priority = THREAD_MIN_PRIORITY;
+  }
+
+#endif
+
+  // Choisir le prochain
+  thread *next = thread_scheduler_pick_next();
+
+  if (!next || next == prev) {
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
     return 0;
   }
-  if (prev->state == THREAD_RUNNING) {
-    prev->state = THREAD_READY;
-    // Put the current thread back in the ready queue
-    TAILQ_INSERT_TAIL(&ready_queue, prev, entries);
+
+  TAILQ_REMOVE(&ready_queue, next, entries);
+  next->in_ready_queue = 0;
+
+#if THREAD_SCHED_POLICY == THREAD_SCHED_PRIO
+
+  // Décision: switch seulement si meilleur
+  if (next->priority <= prev->priority) {
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
+    thread_scheduler_enqueue(next);
+    return 0;
   }
 
+#endif
+
+  // 5. Remettre le courant dans la queue
+  if (prev->state == THREAD_RUNNING) {
+    prev->state = THREAD_READY;
+    thread_scheduler_enqueue(prev);
+  }
+
+  // 6. Switch
   swap_thread(prev, next);
 
 #ifdef ENABLE_PREEMPTION
@@ -211,7 +283,12 @@ int thread_yield_to(thread_t target_handle) {
 
   thread *prev = current_thread;
   prev->state = THREAD_READY;
-  TAILQ_INSERT_TAIL(&ready_queue, prev, entries);
+  thread_scheduler_enqueue(prev);
+
+  if (target->in_ready_queue) {
+    TAILQ_REMOVE(&ready_queue, target, entries);
+    target->in_ready_queue = 0;
+  }
 
   swap_thread(prev, target);
 
@@ -259,18 +336,19 @@ void thread_exit(void *retval) {
   if (dying->joined_by != NULL) {
     thread *joiner = dying->joined_by;
     joiner->state = THREAD_READY;
-    TAILQ_INSERT_TAIL(&ready_queue, joiner, entries);
+    thread_scheduler_enqueue(joiner);
   }
 
   // Pick the next thread normally via FIFO — no special case needed.
   // The joiner (if any) is already in the queue at this point.
-  thread *next = TAILQ_FIRST(&ready_queue);
+  thread *next = thread_scheduler_pick_next();
 
   if (next == NULL) {
     thread_switch_to_cleanup();
   }
 
   TAILQ_REMOVE(&ready_queue, next, entries);
+  next->in_ready_queue = 0;
   current_thread = next;
   current_thread->state = THREAD_RUNNING;
   setcontext(&current_thread->context);
@@ -331,10 +409,9 @@ int thread_join(thread_t thread_handle, void **retval) {
     current_thread->waiting_for = target;
 
     thread *prev = current_thread;
-    thread *next = TAILQ_FIRST(&ready_queue);
+    thread *next = thread_scheduler_pick_next();
 
     if (next == NULL) {
-      // Nobody else to run → real deadlock
       current_thread->state = THREAD_RUNNING;
       current_thread->waiting_for = NULL;
 #ifdef ENABLE_PREEMPTION
@@ -343,6 +420,9 @@ int thread_join(thread_t thread_handle, void **retval) {
       errno = EDEADLK;
       return -1;
     }
+
+    TAILQ_REMOVE(&ready_queue, next, entries);
+    next->in_ready_queue = 0;
 
     // Yield exactly once. We will return here only when thread_exit()
     // of target puts us back into the ready queue.
@@ -377,6 +457,40 @@ int thread_join(thread_t thread_handle, void **retval) {
     }
     free(target);
   }
+
+#ifdef ENABLE_PREEMPTION
+  preem_unblock();
+#endif
+
+  return 0;
+}
+
+int thread_set_priority(thread_t t, int prio) {
+  if (!t)
+    return -1;
+
+  thread *th = (thread *)t;
+
+#ifdef ENABLE_PREEMPTION
+  preem_block();
+#endif
+
+  // clamp
+  if (prio > THREAD_MAX_PRIORITY)
+    prio = THREAD_MAX_PRIORITY;
+  if (prio < THREAD_MIN_PRIORITY)
+    prio = THREAD_MIN_PRIORITY;
+
+  th->priority = prio;
+
+#if THREAD_SCHED_POLICY == THREAD_SCHED_PRIO
+  if (th->state == THREAD_READY) { // Pour insérer le thread à la bonne position dans la ready_queue
+                                   // si i est dèjà dans la queue
+    TAILQ_REMOVE(&ready_queue, th, entries);
+    th->in_ready_queue = 0;
+    thread_scheduler_enqueue(th);
+  }
+#endif
 
 #ifdef ENABLE_PREEMPTION
   preem_unblock();
