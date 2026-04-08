@@ -6,63 +6,211 @@
 \usepackage{geometry}
 \usepackage{hyperref}
 \usepackage{setspace}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{subcaption}
 
 \geometry{margin=2.5cm}
 \setstretch{1.08}
 \hypersetup{hidelinks}
+\graphicspath{{../results/}{results/}}
 
-\title{Rapport intermediaire -- \v{E}tat d'avancement}
+\title{Rapport interm\'ediaire~-- \'Etat d'avancement}
 \author{}
-\date{}
+\date{6 avril 2026}
 
 \begin{document}
 \maketitle
 
-\section{\'Etat actuel du projet}
+\section{Ce qui fonctionne}
 
-\subsection{Cr\'eation, ex\'ecution et terminaison}
+\subsection{Ordonnancement coop\'eratif FIFO}
+
+L'ordonnanceur est op\'erationnel utilisant actuellement la politique FIFO. La \texttt{ready\_queue} est une
+\texttt{TAILQ} BSD~: insertion en $O(1)$ en queue, extraction en $O(1)$ en t\^ete.
+
+\texttt{thread\_yield} place le thread courant en \'etat \texttt{THREAD\_READY}
+en queue puis bascule vers le premier thread disponible via \texttt{swapcontext}.
+\texttt{thread\_yield\_to} cible un thread pr\'ecis~; si celui-ci n'est pas pr\^et,
+il se rabat sur \texttt{thread\_yield}.
+
+\texttt{thread\_join} impl\'emente une d\'etection de deadlock par parcours de la
+cha\^ine \texttt{joined\_by} avant de bloquer (complexité linéaire en la taille de la chaine, à améliorer si possible). Si la cible est d\'ej\`a termin\'ee,
+le join est imm\'ediat, sans changement de contexte. Sinon le thread courant passe
+en \texttt{THREAD\_BLOCKED} et c\`ede la main.
+
+\texttt{thread\_exit} marque le thread \texttt{THREAD\_TERMINATED}, d\'epose la
+valeur de retour, puis r\'eveille le joineur (\texttt{joined\_by}) s'il en existe
+un, prend le premier thread pr\^et disponible sinon, ou bascule sur la
+\textit{cleanup stack} si aucun thread n'est disponible.
+
+Tous les tests fournis (01 \`a 81) passent. Valgrind ne signale aucune fuite
+m\'emoire (avec les options \texttt{-s --leak-check=full --show-reachable=yes --track-origins=yes}).
+
+\subsection{Gestion des piles~: pool et guard pages}
+
+Chaque pile est allou\'ee via \texttt{mmap} avec une \textit{guard page} de 4~Ko
+en bas de pile (\texttt{mprotect(PROT\_NONE)}), ce qui d\'etecte les d\'ebordements
+d\`es le premier acc\`es hors-limites. Chaque pile est enregistr\'ee aupr\`es de
+Valgrind via \texttt{VALGRIND\_STACK\_REGISTER}.
+
+Plut\^ot que de lib\'erer syst\'ematiquement les piles \`a chaque terminaison de
+thread, un \textbf{pool de piles} conserve jusqu'\`a \texttt{MAX\_POOL\_STACKS}. entr\'ees r\'eutilisables.
+\texttt{stack\_pool\_alloc} d\'epile une entr\'ee existante en $O(1)$ au lieu de
+rappeler \texttt{mmap}. Ce m\'ecanisme r\'eduit significativement le co\^ut de
+cr\'eation lors des tests \`a grande \'echelle (\texttt{22-create-many},
+\texttt{23-create-many-recursive})~: la diff\'erence est mesurable d\`es quelques
+centaines de threads.
+
+\subsection{Garbage collection des zombies}
+
+Un thread termin\'e non encore join\'e est plac\'e dans une \texttt{zombie\_queue}~:
+sa m\'emoire n'est pas lib\'er\'ee imm\'ediatement car un futur \texttt{thread\_join}
+doit encore lire \texttt{retval}. \`A la fin du programme, \texttt{do\_final\_cleanup} lib\`ere tous les zombies r\'esiduels et vide le
+pool. Cette fonction s'ex\'ecute sur une pile neutre de 8~Ko (\texttt{cleanup\_stack})
+pour ne jamais lib\'erer la pile sur laquelle on s'ex\'ecute.
+
+\subsection{Mutex}
+
+Les mutex disposent d'une \texttt{waiting\_queue} par instance.
+\begin{itemize}[noitemsep]
+  \item \textbf{Fast path ($O(1)$)~:} si le mutex est libre,
+        \texttt{thread\_mutex\_lock} l'acquiert sans changement de contexte.
+  \item \textbf{Slow path~:} si le mutex est occup\'e, le thread courant passe en
+        \texttt{THREAD\_BLOCKED} et est ins\'er\'e dans la \texttt{waiting\_queue}.
+        \texttt{thread\_mutex\_unlock} transfère la propri\'et\'e directement au
+        premier waiter (\texttt{locked} reste \`a 1). Le thread r\'eveill\'e est remis en \texttt{ready\_queue}
+        en \'etat \texttt{THREAD\_READY}.
+\end{itemize}
+
+Si la pr\'eemption est active (\texttt{PREEM\_ENABLED}), les sections critiques
+du mutex sont prot\'eg\'ees par \texttt{preem\_block}/\texttt{preem\_unblock}.
+
+\subsection{Pr\'eemption}
+
+La pr\'eemption repose sur \texttt{SIGVTALRM} et
+\texttt{setitimer(ITIMER\_VIRTUAL)}. L\`alarme est d\'eclench\'ee toutes les 5~ms (configurable via \texttt{init\_prem}).
+Le gestionnaire de signal (\texttt{preemption\_handler}) appelle
+\texttt{thread\_yield}, ins\'erant le thread courant en fin de queue et basculant
+vers le prochain thread pr\^et.
+
+Toutes les sections critiques du planificateur (cr\'eation, yield, join, mutex)
+sont prot\'eg\'ees par \texttt{preem\_block}/\texttt{preem\_unblock}
+(\texttt{sigprocmask(SIG\_BLOCK\-/SIG\_UNBLOCK)}) pour \'eviter toute r\'eentrance
+asynchrone. L'option \texttt{SA\_RESTART} est pass\'ee \`a \texttt{sigaction} pour
+que les appels syst\`eme interrompus soient relanc\'es automatiquement.
+
+La pr\'eemption est activ\'ee \`a la compilation avec \texttt{-DENABLE\_PREEMPTION}
+pour ne pas p\'enaliser les tests qui n'en ont pas besoin. Le test
+\texttt{71-preemption} passe~: un thread est bien interrompu et un 
+autre progress.
+
+\section{Performances~: comparaison avec pthreads}
+
+Les premiers r\'esultats montrent un avantage net de notre biblioth\`eque sur
+les tests orient\'es cr\'eation massive de threads et synchronisation coop\'erative.
+Les figures ci-dessous illustrent les mesures obtenues avec le script de benchmark.
+
+\begin{figure}[H]
+      \centering
+      \begin{subfigure}[t]{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{21-create-many.png}
+            \caption{\texttt{21-create-many}}
+            \label{fig:create-many}
+      \end{subfigure}
+      \hfill
+      \begin{subfigure}[t]{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{22-create-many-recursive.png}
+            \caption{\texttt{22-create-many-recursive}}
+            \label{fig:create-many-rec}
+      \end{subfigure}
+
+      \vspace{0.6em}
+
+      \begin{subfigure}[t]{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{23-create-many-once.png}
+            \caption{\texttt{23-create-many-once}}
+            \label{fig:create-many-once}
+      \end{subfigure}
+      \hfill
+      \begin{subfigure}[t]{0.48\linewidth}
+            \centering
+            \includegraphics[width=\linewidth]{61-mutex.png}
+            \caption{\texttt{61-mutex}}
+            \label{fig:mutex}
+      \end{subfigure}
+
+      \caption{Comparaison des temps d'ex\'ecution entre notre impl\'ementation et \texttt{pthread}.}
+      \label{fig:perf-grid}
+\end{figure}
+
+Ces r\'esultats s'expliquent par la nature des tests~:
+\begin{itemize}[noitemsep]
+  \item \textbf{Cr\'eation massive de threads (21/22/23).} Notre biblioth\`eque
+        cr\'ee des threads utilisateur plus l\'egers, avec r\'eutilisation de
+        piles via le pool. \`A l'inverse, \texttt{pthread} implique davantage de
+        co\^uts noyau et de synchronisations internes pour chaque cr\'eation.
+  \item \textbf{Commutation de contexte en espace utilisateur.} Les
+        basculements se font principalement via \texttt{swapcontext}, sans
+        ordonnanceur noyau \`a chaque changement de thread, ce qui r\'eduit le
+        co\^ut moyen par commutation.
+  \item \textbf{Mutex en mode coop\'eratif (61-mutex).} Le r\'eveil/transfert de
+        propri\'et\'e est direct entre threads utilisateur (file d'attente locale),
+        avec moins de transitions syst\`eme dans ce sc\'enario monocoeur.
+\end{itemize}
+
+En pratique, sur ces charges orient\'ees ``beaucoup de threads + beaucoup de
+commutations'', notre impl\'ementation est syst\'ematiquement devant \texttt{pthread}.
+Ce n'est pas une sup\'eriorit\'e universelle~: sur des charges fortement
+calculatoires exploitant le parall\'elisme mat\'eriel, \texttt{pthread} peut
+redevenir meilleur tant que notre version multicoeur n'est pas activ\'ee.
 
 
-\subsection{Synchronisation}
+\section{Limites connues}
 
-\subsection{preemption}
+\begin{itemize}[noitemsep]
+  \item \textbf{Boucle semi-active dans \texttt{thread\_join}~:} l'attente utilise
+        une boucle \texttt{while} avec \texttt{swap\_thread}. Dans des cas avec de
+        nombreux threads bloqu\'es simultan\'ement, cela peut g\'en\'erer des
+        changements de contexte inutiles. Une attente purement passive (r\'eveil
+        uniquement d\'eclench\'e par \texttt{thread\_exit}) serait plus propre~;
+        c'est pr\'evu pour la suite.
+  \item \textbf{Graphes de performance incomplets~:} le script \texttt{make graphs}
+        est fonctionnel mais les courbes doivent encore \^etre produites pour
+        l'ensemble des tests $\geq 21$ avec variation du nombre de threads.
+\end{itemize}
 
-\subsection{Tests de performance & graphiques}
+\section{Suite du projet}
 
-\section{Pourquoi certains tests sont meilleurs que pthreads}
+\subsection{Support multicoeur}
 
+Utiliser plusieurs threads noyau internes (pthreads) pour ex\'ecuter les threads
+utilisateur en parall\`ele. La \texttt{ready\_queue} et les structures de
+l'ordonnanceur devront \^etre prot\'eg\'ees par des verrous
+(\texttt{pthread\_spinlock\_t}). On mesurera si le gain de parall\'elisme compense
+le surco\^ut de synchronisation, et pour quel type de workload.
 
-\subsection{Moins de travail c\^ot\'e noyau}
+\subsection{Signaux inter-threads}
 
+Permettre l'envoi de signaux entre threads utilisateur ind\'ependamment des signaux
+syst\`eme (d\'ej\`a utilis\'es pour la pr\'eemption), et potentiellement impl\'ementer plusieurs fonctionnalités
+\texttt{sigwait} pour qu'un thread dorme jusqu'\`a la r\'eception d'un signal.
 
-\subsection{Ordonnancement adapt\'e au cas d'usage}
+\subsection{Am\'elioration du \texttt{thread\_join}}
 
+Passer \`a une attente purement passive~: le thread joineur est d\'epos\'e dans
+\texttt{joined\_by} et ne reprend la main que lorsque \texttt{thread\_exit} le
+r\'eveille explicitement, sans boucle de polling.
 
-\subsection{Co\^ut de cr\'eation ma\^itris\'e}
+\subsection{Finalisation des graphes de performance}
 
-
-\section{Pourquoi pthreads restent meilleurs sur certains tests}
-
-
-\subsection{Les pthreads b\'en\'eficient de l'optimisation syst\`eme}
-
-
-\subsection{Les calculs longs favorisent le parall\'elisme r\'eel}
-
-
-\subsection{Certaines charges sont trop petites}
-
-
-\section{Tests encore limit\'es ou non prioritaires \`a ce stade}
-
-\section{Ce qui sera fait ensuite}
-
-La suite du travail consiste \`a aller vers les objectifs avanc\'es du projet.
-
-\subsection{Multicoeur}
-
-\subsection{signaux}
-
-\section{Conclusion}
+Compléter le script \texttt{make graphs} pour couvrir tous les tests $\geq 21$
+avec variation du nombre de threads, et produire des courbes propres
+(comparaison biblioth\`eque\,/\,pthreads) pour le rapport final.
 
 \end{document}

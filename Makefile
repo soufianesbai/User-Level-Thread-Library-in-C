@@ -17,6 +17,9 @@ INSTALL_DIR = install
 BIN_DIR = $(INSTALL_DIR)/bin
 LIB_DIR = $(INSTALL_DIR)/lib
 COMPAT_HEADERS = thread.h pool.h
+REPORT_DIR = report
+REPORT_TEX = $(REPORT_DIR)/report.tex
+LATEXMK ?= /Library/TeX/texbin/latexmk
 
 # Source files
 SRC = $(wildcard $(SRC_DIR)/*.c)
@@ -88,6 +91,9 @@ install: all pthreads
 
 # --- Utilities ---
 
+report:
+	$(LATEXMK) -synctex=1 -interaction=nonstopmode -file-line-error -pdf -outdir=$(REPORT_DIR) -auxdir=$(REPORT_DIR) $(REPORT_TEX)
+
 # Run all binaries in bin/ with Valgrind
 valgrind: all
 	@for t in $(wildcard bin/*); do \
@@ -96,7 +102,9 @@ valgrind: all
 	done
 
 clean:
-	rm -rf *.o *.so $(SRC_DIR)/*.o bin $(INSTALL_DIR) bench $(COMPAT_HEADERS)
+	rm -rf *.o *.so $(SRC_DIR)/*.o bin $(INSTALL_DIR) bench $(COMPAT_HEADERS) \
+		report/*.aux report/*.fls report/*.fdb_latexmk report/*.log report/*.out \
+		report/*.pdf report/*.synctex.gz report/*.toc report/*.bbl report/*.blg
 
 graphs: all pthreads
 	$(PYTHON) scripts/benchmark_plot.py $(ARGS)
@@ -104,4 +112,4 @@ graphs: all pthreads
 format:
 	$(CLANG_FORMAT) -i $(FORMAT_SRCS)
 
-.PHONY: all tests preemptive-tests pthreads clang install valgrind clean graphs format clang-format bench-plot bench-plot-quick
+.PHONY: all tests preemptive-tests pthreads clang install valgrind clean graphs format report clang-format bench-plot bench-plot-quick
