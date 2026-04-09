@@ -347,8 +347,6 @@ void thread_exit(void *retval) {
     thread_switch_to_cleanup();
   }
 
-  TAILQ_REMOVE(&ready_queue, next, entries);
-  next->in_ready_queue = 0;
   current_thread = next;
   current_thread->state = THREAD_RUNNING;
   setcontext(&current_thread->context);
