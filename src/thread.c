@@ -24,6 +24,58 @@ static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
 
+static thread **thread_obj_pool = NULL;
+static int thread_obj_pool_size = 0;
+static int thread_obj_pool_cap = 0;
+
+#ifndef THREAD_OBJ_POOL_MAX_CACHED
+#define THREAD_OBJ_POOL_MAX_CACHED 16384
+#endif
+
+static thread *thread_obj_alloc(void) {
+  if (thread_obj_pool_size > 0) {
+    return thread_obj_pool[--thread_obj_pool_size];
+  }
+  return malloc(sizeof(thread));
+}
+
+static void thread_obj_release(thread *t) {
+  if (t == NULL || t == &main_thread) {
+    return;
+  }
+
+  if (thread_obj_pool_size >= THREAD_OBJ_POOL_MAX_CACHED) {
+    free(t);
+    return;
+  }
+
+  if (thread_obj_pool_size >= thread_obj_pool_cap) {
+    int new_cap = (thread_obj_pool_cap == 0) ? 64 : thread_obj_pool_cap * 2;
+    if (new_cap > THREAD_OBJ_POOL_MAX_CACHED)
+      new_cap = THREAD_OBJ_POOL_MAX_CACHED;
+
+    thread **new_pool = realloc(thread_obj_pool, sizeof(*new_pool) * new_cap);
+    if (new_pool == NULL) {
+      free(t);
+      return;
+    }
+    thread_obj_pool = new_pool;
+    thread_obj_pool_cap = new_cap;
+  }
+
+  thread_obj_pool[thread_obj_pool_size++] = t;
+}
+
+static void thread_obj_pool_free_all(void) {
+  for (int i = 0; i < thread_obj_pool_size; ++i) {
+    free(thread_obj_pool[i]);
+  }
+  free(thread_obj_pool);
+  thread_obj_pool = NULL;
+  thread_obj_pool_size = 0;
+  thread_obj_pool_cap = 0;
+}
+
 struct thread_queue *thread_get_ready_queue(void) {
   return &ready_queue;
 }
@@ -131,6 +183,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   if (!scheduler_initialized) {
     TAILQ_INIT(&ready_queue);
     thread_cleanup_register();
+    atexit(thread_obj_pool_free_all);
     // Initialize the main thread's context so it can be switched to like any
     // other thread.
     if (getcontext(&main_thread.context) == -1) {
@@ -142,7 +195,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     scheduler_initialized = 1;
   }
 
-  thread *newth = malloc(sizeof(*newth));
+  thread *newth = thread_obj_alloc();
   if (newth == NULL) {
     errno = ENOMEM; // Out of memory
     return -1;
@@ -151,7 +204,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   // Allocate or reuse stack from pool
   struct stack_entry stack_entry;
   if (stack_pool_alloc(&stack_entry) == -1) {
-    free(newth);
+    thread_obj_release(newth);
     errno = ENOMEM;
     return -1;
   }
@@ -168,7 +221,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->waiting_for = NULL;
 
   if (getcontext(&newth->context) == -1) {
-    free(newth);
+    thread_obj_release(newth);
     stack_pool_push(&stack_entry);
     return -1;
   }
@@ -450,7 +503,7 @@ int thread_join(thread_t thread_handle, void **retval) {
                                   .valgrind_id = target->valgrind_stack_id};
       stack_pool_push(&entry);
     }
-    free(target);
+    thread_obj_release(target);
   }
 
 #ifdef ENABLE_PREEMPTION
