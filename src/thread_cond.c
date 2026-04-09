@@ -125,7 +125,7 @@ int thread_cond_broadcast(thread_cond_t *cond) {
 #endif
 
   struct thread_queue *ready_queue = thread_get_ready_queue();
-  (void)ready_queue;  // Unused when no threads are waiting
+  (void)ready_queue; // Unused when no threads are waiting
 
   while (!TAILQ_EMPTY(&cond->waiting_queue)) {
     thread *revived = TAILQ_FIRST(&cond->waiting_queue);

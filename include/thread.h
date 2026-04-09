@@ -71,7 +71,6 @@ int thread_mutex_unlock(thread_mutex_t *mutex);
 
 int thread_set_priority(thread_t t, int prio);
 
-
 #else /* USE_PTHREAD */
 
 /* Si on compile avec -DUSE_PTHREAD, ce sont les pthreads qui sont utilisés */
@@ -83,7 +82,7 @@ int thread_set_priority(thread_t t, int prio);
 #define thread_yield sched_yield
 #define thread_join pthread_join
 #define thread_exit pthread_exit
-#define thread_set_priority(t, prio)  ((void)(t), (void)(prio), (void)0)
+#define thread_set_priority(t, prio) ((void)(t), (void)(prio), (void)0)
 
 /* Interface possible pour les mutex */
 #define thread_mutex_t pthread_mutex_t

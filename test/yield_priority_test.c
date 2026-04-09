@@ -53,9 +53,9 @@ int main(void) {
   thread_create(&t3, mid, NULL);
 
 #if THREAD_SCHED_POLICY == THREAD_SCHED_PRIO
-  thread_set_priority(t1, 10);  // low
-  thread_set_priority(t2, 80);  // high
-  thread_set_priority(t3, 40);  // mid
+  thread_set_priority(t1, 10); // low
+  thread_set_priority(t2, 80); // high
+  thread_set_priority(t3, 40); // mid
 #endif
 
   thread_join(t1, NULL);
@@ -90,9 +90,12 @@ int main(void) {
   // ---- TEST 3: fréquence ----
   int c1 = 0, c2 = 0, c3 = 0;
   for (int i = 0; i < idx; i++) {
-    if (trace[i] == 1) c1++;
-    if (trace[i] == 2) c2++;
-    if (trace[i] == 3) c3++;
+    if (trace[i] == 1)
+      c1++;
+    if (trace[i] == 2)
+      c2++;
+    if (trace[i] == 3)
+      c3++;
   }
 
   assert(c1 == 3);

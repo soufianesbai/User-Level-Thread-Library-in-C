@@ -23,7 +23,8 @@ typedef struct thread {
   struct thread *joined_by;    // The thread that is joining on this thread (if any)
   struct thread *waiting_for;  // The thread that is waiting for this thread to terminate (if any)
   int priority;                // Thread priority for scheduling
-  int in_ready_queue;          // Flag to indicate if the thread is currently in the ready queue (for debugging)
+  int in_ready_queue; // Flag to indicate if the thread is currently in the ready queue (for
+                      // debugging)
 } thread;
 
 void thread_cleanup_register(void);
@@ -34,7 +35,7 @@ struct thread_queue *thread_get_ready_queue(void);
 thread *thread_get_current_thread(void);
 void thread_set_current_thread(thread *t);
 int swap_thread(thread *prev, thread *next);
-thread* thread_scheduler_pick_next(void);
+thread *thread_scheduler_pick_next(void);
 void thread_scheduler_enqueue(thread *t);
 int thread_set_priority(thread_t t, int prio);
 
