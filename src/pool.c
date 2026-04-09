@@ -11,7 +11,7 @@
 static struct stack_entry *stack_pool = NULL;
 static int stack_pool_size = 0;
 static int stack_pool_cap = 0;
-static const int MAX_POOLED_STACKS = 64; // Prevent unbounded pool growth
+static const int MAX_POOLED_STACKS = STACK_POOL_MAX_CACHED;
 
 /*
  * stack_pool_alloc — pop a stack from the pool, or allocate a fresh one.
