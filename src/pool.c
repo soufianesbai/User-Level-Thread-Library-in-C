@@ -13,6 +13,28 @@ static int stack_pool_size = 0;
 static int stack_pool_cap = 0;
 static const int MAX_POOLED_STACKS = STACK_POOL_MAX_CACHED;
 
+static unsigned stack_register_for_valgrind(void *stack_base) {
+#ifdef NVALGRIND
+  (void)stack_base;
+  return 0;
+#else
+  if (!RUNNING_ON_VALGRIND) {
+    return 0;
+  }
+  return VALGRIND_STACK_REGISTER(stack_base, (char *)stack_base + STACK_SIZE);
+#endif
+}
+
+static void stack_deregister_for_valgrind(unsigned id) {
+#ifndef NVALGRIND
+  if (id != 0 && RUNNING_ON_VALGRIND) {
+    VALGRIND_STACK_DEREGISTER(id);
+  }
+#else
+  (void)id;
+#endif
+}
+
 /*
  * stack_pool_alloc — pop a stack from the pool, or allocate a fresh one.
  */
@@ -42,7 +64,7 @@ int stack_pool_alloc(struct stack_entry *entry) {
   void *stack = (char *)map + GUARD_SIZE;
   entry->map = map;
   entry->stack = stack;
-  entry->valgrind_id = VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
+  entry->valgrind_id = stack_register_for_valgrind(stack);
   return 0;
 }
 
@@ -52,7 +74,7 @@ int stack_pool_alloc(struct stack_entry *entry) {
 void stack_pool_push(struct stack_entry *entry) {
   if (stack_pool_size >= MAX_POOLED_STACKS) {
     // Pool is full; free the stack immediately
-    VALGRIND_STACK_DEREGISTER(entry->valgrind_id);
+    stack_deregister_for_valgrind(entry->valgrind_id);
     munmap(entry->map, STACK_SIZE + GUARD_SIZE);
     return;
   }
@@ -65,7 +87,7 @@ void stack_pool_push(struct stack_entry *entry) {
     struct stack_entry *new_pool = realloc(stack_pool, sizeof(*new_pool) * new_cap);
     if (new_pool == NULL) {
       // Realloc failed; free the stack instead
-      VALGRIND_STACK_DEREGISTER(entry->valgrind_id);
+      stack_deregister_for_valgrind(entry->valgrind_id);
       munmap(entry->map, STACK_SIZE + GUARD_SIZE);
       return;
     }
@@ -81,7 +103,7 @@ void stack_pool_push(struct stack_entry *entry) {
  */
 void stack_pool_free_all(void) {
   for (int i = 0; i < stack_pool_size; ++i) {
-    VALGRIND_STACK_DEREGISTER(stack_pool[i].valgrind_id);
+    stack_deregister_for_valgrind(stack_pool[i].valgrind_id);
     munmap(stack_pool[i].map, STACK_SIZE + GUARD_SIZE);
   }
   free(stack_pool);
