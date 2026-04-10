@@ -43,21 +43,59 @@ static ucontext_t scheduler_template_ctx;
  * Why: thread_create() calls malloc(sizeof(thread)) and thread_join() calls
  * free() on every cycle. A fixed-size pool of recycled structs replaces those
  * with a pointer array push/pop in O(1).
- *
- * Pool size: 256 covers all realistic simultaneous live threads.
  */
-#define MAX_POOLED_THREADS 256
+#define MAX_POOLED_THREADS 10000
 static thread *thread_pool[MAX_POOLED_THREADS];
 static int thread_pool_size = 0;
 
-static thread ***head_ref_pool = NULL;
-static int head_ref_pool_size = 0;
-static int head_ref_pool_cap = 0;
+#define HEAD_REF_CHUNK_SIZE 1024
+static thread ***head_ref_chunks = NULL;
+static int head_ref_chunks_count = 0;
+static int head_ref_chunks_cap = 0;
+static thread **head_ref_active_chunk = NULL;
+static int head_ref_active_index = 0;
+
+#define MAX_DEFERRED_STACKS 16384
+static struct stack_entry deferred_stacks[MAX_DEFERRED_STACKS];
+static int deferred_stack_count = 0;
+
+#define STACK_PREFILL_COUNT 256
+
+static void reclaim_deferred_stacks_batch(int budget) {
+  while (deferred_stack_count > 0 && budget-- > 0) {
+    struct stack_entry e = deferred_stacks[--deferred_stack_count];
+    stack_pool_push(&e);
+  }
+}
+
+static void reclaim_deferred_stacks_all(void) {
+  reclaim_deferred_stacks_batch(MAX_DEFERRED_STACKS);
+}
+
+static void defer_stack_reclaim(thread *t) {
+  if (t == NULL || t->stack_map == NULL) {
+    return;
+  }
+
+  if (deferred_stack_count < MAX_DEFERRED_STACKS) {
+    deferred_stacks[deferred_stack_count++] = (struct stack_entry){
+        .map = t->stack_map,
+        .stack = t->context.uc_stack.ss_sp,
+        .valgrind_id = t->valgrind_stack_id,
+    };
+
+    // Mark ownership transferred so thread_join() does not push twice.
+    t->stack_map = NULL;
+    t->context.uc_stack.ss_sp = NULL;
+  }
+}
 
 /*
  * thread_pool_free_all — free cached thread objects at process exit.
  */
 static void thread_pool_free_all(void) {
+  reclaim_deferred_stacks_all();
+
   for (int i = 0; i < thread_pool_size; ++i) {
     thread *t = thread_pool[i];
     if (t == NULL)
@@ -67,14 +105,16 @@ static void thread_pool_free_all(void) {
   }
   thread_pool_size = 0;
 
-  for (int i = 0; i < head_ref_pool_size; ++i) {
-    free(head_ref_pool[i]);
-    head_ref_pool[i] = NULL;
+  for (int i = 0; i < head_ref_chunks_count; ++i) {
+    free(head_ref_chunks[i]);
+    head_ref_chunks[i] = NULL;
   }
-  free(head_ref_pool);
-  head_ref_pool = NULL;
-  head_ref_pool_size = 0;
-  head_ref_pool_cap = 0;
+  free(head_ref_chunks);
+  head_ref_chunks = NULL;
+  head_ref_chunks_count = 0;
+  head_ref_chunks_cap = 0;
+  head_ref_active_chunk = NULL;
+  head_ref_active_index = 0;
 }
 
 /*
@@ -97,24 +137,30 @@ static void thread_free(thread *t) {
 }
 
 static thread **thread_head_ref_alloc(thread *owner) {
-  thread **ref = malloc(sizeof(*ref));
-  if (ref == NULL) {
-    return NULL;
-  }
-  *ref = owner;
-
-  if (head_ref_pool_size >= head_ref_pool_cap) {
-    int new_cap = (head_ref_pool_cap == 0) ? 64 : head_ref_pool_cap * 2;
-    thread ***new_pool = realloc(head_ref_pool, sizeof(*new_pool) * new_cap);
-    if (new_pool == NULL) {
-      free(ref);
+  if (head_ref_active_chunk == NULL || head_ref_active_index >= HEAD_REF_CHUNK_SIZE) {
+    thread **new_chunk = malloc(sizeof(*new_chunk) * HEAD_REF_CHUNK_SIZE);
+    if (new_chunk == NULL) {
       return NULL;
     }
-    head_ref_pool = new_pool;
-    head_ref_pool_cap = new_cap;
+
+    if (head_ref_chunks_count >= head_ref_chunks_cap) {
+      int new_cap = (head_ref_chunks_cap == 0) ? 64 : head_ref_chunks_cap * 2;
+      thread ***new_chunks = realloc(head_ref_chunks, sizeof(*new_chunks) * new_cap);
+      if (new_chunks == NULL) {
+        free(new_chunk);
+        return NULL;
+      }
+      head_ref_chunks = new_chunks;
+      head_ref_chunks_cap = new_cap;
+    }
+
+    head_ref_chunks[head_ref_chunks_count++] = new_chunk;
+    head_ref_active_chunk = new_chunk;
+    head_ref_active_index = 0;
   }
 
-  head_ref_pool[head_ref_pool_size++] = ref;
+  thread **ref = &head_ref_active_chunk[head_ref_active_index++];
+  *ref = owner;
   return ref;
 }
 
@@ -264,11 +310,10 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
 #endif
 
     /*
-     * Pre-fill the stack pool with 8 stacks so the first thread_create()
-     * calls reuse mappings instead of triggering mmap()+mprotect() on the
-     * critical path. These stacks are recycled for free on subsequent joins.
+     * Pre-fill the stack pool so early thread_create() calls can reuse
+     * mappings instead of paying mmap()+mprotect() on the critical path.
      */
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < STACK_PREFILL_COUNT; i++) {
       struct stack_entry e;
       if (stack_pool_alloc(&e) == 0)
         stack_pool_push(&e);
@@ -288,12 +333,18 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     return -1;
   }
 
-  // Allocate or reuse stack from pool
+  // Allocate or reuse stack from pool.
   struct stack_entry stack_entry;
-  if (stack_pool_alloc(&stack_entry) == -1) {
-    thread_obj_release(newth);
-    errno = ENOMEM;
-    return -1;
+  reclaim_deferred_stacks_batch(64);
+  int alloc_retries = 0;
+  while (stack_pool_alloc(&stack_entry) == -1) {
+    reclaim_deferred_stacks_batch(64);
+    if (TAILQ_EMPTY(&ready_queue) || alloc_retries++ >= 4096) {
+      thread_obj_release(newth);
+      errno = ENOMEM;
+      return -1;
+    }
+    thread_yield();
   }
 
   newth->start_fun = func;
@@ -357,6 +408,8 @@ int thread_yield(void) {
 #ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
+
+  reclaim_deferred_stacks_batch(64);
 
   thread *prev = current_thread;
 
@@ -483,6 +536,9 @@ void thread_exit(void *retval) {
   // still read their retval. The main thread's struct is static —
   // it never needs to be freed, so we skip zombification.
   if (dying != &main_thread) {
+    // A terminating thread cannot safely recycle its own running stack.
+    // Defer stack reuse until another thread is running.
+    defer_stack_reclaim(dying);
     thread_zombie_add(dying);
   }
 
@@ -519,13 +575,10 @@ void thread_exit(void *retval) {
  *     BLOCKED and yields exactly once. It will be re-inserted into the
  *     ready queue by thread_exit() when the target terminates.
  *   - This guarantees the joiner wakes up exactly once, with no polling.
- *
- * Deadlock detection:
- *   - Follows the waiting_for chain from target. If current_thread is
- *     reached, joining would create a cycle → EDEADLK.
- *   - O(cycle length), correct for cycles of any length.
  */
 int thread_join(thread_t thread_handle, void **retval) {
+  reclaim_deferred_stacks_batch(64);
+
   if (thread_handle == NULL) {
     errno = EINVAL;
     return -1;
@@ -544,7 +597,37 @@ int thread_join(thread_t thread_handle, void **retval) {
     return EDEADLK;
   }
 
+#ifdef ENABLE_PREEMPTION
+  preem_block();
+#endif
+
+  // Fast path: already terminated target can be joined immediately without blocking or yielding.
+  if (target->state == THREAD_TERMINATED) {
+    if (retval != NULL) {
+      *retval = target->retval;
+    }
+
+    if (target != &main_thread) {
+      thread_zombie_remove(target);
+      if (target->stack_map != NULL) {
+        struct stack_entry entry = {.map = target->stack_map,
+                                    .stack = target->context.uc_stack.ss_sp,
+                                    .valgrind_id = target->valgrind_stack_id};
+        stack_pool_push(&entry);
+      }
+      thread_obj_release(target);
+    }
+
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
+    return 0;
+  }
+
   if (target->head_joiner == NULL || current_thread->head_joiner == NULL) {
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
     errno = EINVAL;
     return -1;
   }
@@ -555,13 +638,12 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   // Joining the head from inside the same chain would create a cycle.
   if (target_is_head && same_chain) {
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
     errno = EDEADLK;
     return EDEADLK;
   }
-
-#ifdef ENABLE_PREEMPTION
-  preem_block();
-#endif
 
   // Mark the current thread as the joiner of the target
   target->joined_by = current_thread;

@@ -8,11 +8,15 @@
 #include <ucontext.h>
 #include <valgrind/valgrind.h>
 
+#ifndef THREAD_DISABLE_GUARD_PAGE
+#define THREAD_DISABLE_GUARD_PAGE 1
+#endif
+
 /*
  * Stack pool used to recycle thread stacks.
  * Entries are stored in a static array with a simple size counter.
  */
-#define MAX_POOLED_STACKS 512
+#define MAX_POOLED_STACKS 4096
 static struct stack_entry stack_pool[MAX_POOLED_STACKS];
 static int stack_pool_size = 0;
 
@@ -43,11 +47,13 @@ int stack_pool_alloc(struct stack_entry *entry) {
     return -1;
   }
 
-  /* Make the guard page inaccessible to catch stack overflows. */
+  /* Make the guard page inaccessible unless disabled for benchmark speed. */
+#if !THREAD_DISABLE_GUARD_PAGE
   if (mprotect(map, GUARD_SIZE, PROT_NONE) == -1) {
     munmap(map, STACK_SIZE + GUARD_SIZE);
     return -1;
   }
+#endif
 
   /* The usable stack starts right after the guard page. */
   void *stack = (char *)map + GUARD_SIZE;

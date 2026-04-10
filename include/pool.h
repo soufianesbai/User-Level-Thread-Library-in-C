@@ -1,7 +1,7 @@
 #ifndef POOL_H
 #define POOL_H
 
-#define STACK_SIZE (64 * 1024)
+#define STACK_SIZE (32 * 1024)
 #define GUARD_SIZE (4 * 1024)
 
 struct stack_entry {
