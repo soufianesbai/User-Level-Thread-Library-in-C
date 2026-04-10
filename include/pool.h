@@ -1,12 +1,8 @@
 #ifndef POOL_H
 #define POOL_H
 
-#define STACK_SIZE (1024 * 1024)
-#define GUARD_SIZE 4096
-
-#ifndef STACK_POOL_MAX_CACHED
-#define STACK_POOL_MAX_CACHED 16384
-#endif
+#define STACK_SIZE (64 * 1024)
+#define GUARD_SIZE (4 * 1024)
 
 struct stack_entry {
   void *map;            // The entire mapped area (including guard)

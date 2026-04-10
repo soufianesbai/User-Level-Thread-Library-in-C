@@ -103,7 +103,8 @@ int thread_sigwait(thread_sigset_t set, int *sig);
 #define thread_mutex_unlock pthread_mutex_unlock
 
 #ifdef ENABLE_SIGNAL
-/* Si on compile avec ENABLE_SIGNAL=1 on a le moyen de faire attendre un thread et de le réveiller avec les signaux */
+/* Si on compile avec ENABLE_SIGNAL=1 on a le moyen de faire attendre un thread et de le réveiller
+ * avec les signaux */
 typedef uint32_t thread_sigset_t;
 #define thread_signal_send(target, sig) ((void)(target), (void)(sig), -1)
 #define thread_sigwait(set, sig) ((void)(set), (void)(sig), -1)

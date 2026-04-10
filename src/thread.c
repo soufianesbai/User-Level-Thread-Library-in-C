@@ -25,23 +25,48 @@ static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
 
-static thread **thread_obj_pool = NULL;
-static int thread_obj_pool_size = 0;
-static int thread_obj_pool_cap = 0;
+/*
+ * Template context captured once during scheduler initialization.
+ * Used in thread_create() to initialize each new context by copy,
+ * instead of calling getcontext() for every thread creation.
+ *
+ * Why: getcontext() is a syscall that captures registers, signal mask, etc.
+ * makecontext() overwrites all the parts that matter anyway (stack pointer,
+ * entry point), so the template content is irrelevant — only its structure
+ * (size, alignment) is needed. Copying it saves ~10,000 syscalls on test 21.
+ */
+static ucontext_t scheduler_template_ctx;
 
-static thread ***head_ref_pool = NULL;
-static int head_ref_pool_size = 0;
-static int head_ref_pool_cap = 0;
+/*
+ * Thread struct pool — recycles thread heap allocations across create/join.
+ *
+ * Why: thread_create() calls malloc(sizeof(thread)) and thread_join() calls
+ * free() on every cycle. A fixed-size pool of recycled structs replaces those
+ * with a pointer array push/pop in O(1).
+ *
+ * Pool size: 256 covers all realistic simultaneous live threads.
+ */
+#define MAX_POOLED_THREADS 256
+static thread *thread_pool[MAX_POOLED_THREADS];
+static int thread_pool_size = 0;
 
-#ifndef THREAD_OBJ_POOL_MAX_CACHED
-#define THREAD_OBJ_POOL_MAX_CACHED 16384
-#endif
-
-static thread *thread_obj_alloc(void) {
-  if (thread_obj_pool_size > 0) {
-    return thread_obj_pool[--thread_obj_pool_size];
-  }
+/*
+ * thread_alloc — pop a thread struct from the pool or malloc a fresh one.
+ */
+static thread *thread_alloc(void) {
+  if (thread_pool_size > 0)
+    return thread_pool[--thread_pool_size];
   return malloc(sizeof(thread));
+}
+
+/*
+ * thread_free — return a thread struct to the pool, or free it if full.
+ */
+static void thread_free(thread *t) {
+  if (thread_pool_size < MAX_POOLED_THREADS)
+    thread_pool[thread_pool_size++] = t;
+  else
+    free(t);
 }
 
 static thread **thread_head_ref_alloc(thread *owner) {
@@ -50,19 +75,6 @@ static thread **thread_head_ref_alloc(thread *owner) {
     return NULL;
   }
   *ref = owner;
-
-  if (head_ref_pool_size >= head_ref_pool_cap) {
-    int new_cap = (head_ref_pool_cap == 0) ? 64 : head_ref_pool_cap * 2;
-    thread ***new_pool = realloc(head_ref_pool, sizeof(*new_pool) * new_cap);
-    if (new_pool == NULL) {
-      free(ref);
-      return NULL;
-    }
-    head_ref_pool = new_pool;
-    head_ref_pool_cap = new_cap;
-  }
-
-  head_ref_pool[head_ref_pool_size++] = ref;
   return ref;
 }
 
@@ -71,44 +83,12 @@ static void thread_obj_release(thread *t) {
     return;
   }
 
-  if (thread_obj_pool_size >= THREAD_OBJ_POOL_MAX_CACHED) {
-    free(t);
-    return;
+  if (t->head_joiner != NULL && *t->head_joiner == t) {
+    free(t->head_joiner);
+    t->head_joiner = NULL;
   }
 
-  if (thread_obj_pool_size >= thread_obj_pool_cap) {
-    int new_cap = (thread_obj_pool_cap == 0) ? 64 : thread_obj_pool_cap * 2;
-    if (new_cap > THREAD_OBJ_POOL_MAX_CACHED)
-      new_cap = THREAD_OBJ_POOL_MAX_CACHED;
-
-    thread **new_pool = realloc(thread_obj_pool, sizeof(*new_pool) * new_cap);
-    if (new_pool == NULL) {
-      free(t);
-      return;
-    }
-    thread_obj_pool = new_pool;
-    thread_obj_pool_cap = new_cap;
-  }
-
-  thread_obj_pool[thread_obj_pool_size++] = t;
-}
-
-static void thread_obj_pool_free_all(void) {
-  for (int i = 0; i < thread_obj_pool_size; ++i) {
-    free(thread_obj_pool[i]);
-  }
-  free(thread_obj_pool);
-  thread_obj_pool = NULL;
-  thread_obj_pool_size = 0;
-  thread_obj_pool_cap = 0;
-
-  for (int i = 0; i < head_ref_pool_size; ++i) {
-    free(head_ref_pool[i]);
-  }
-  free(head_ref_pool);
-  head_ref_pool = NULL;
-  head_ref_pool_size = 0;
-  head_ref_pool_cap = 0;
+  thread_free(t);
 }
 
 struct thread_queue *thread_get_ready_queue(void) {
@@ -218,26 +198,54 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   if (!scheduler_initialized) {
     TAILQ_INIT(&ready_queue);
     thread_cleanup_register();
-    atexit(thread_obj_pool_free_all);
+
     // Initialize the main thread's context so it can be switched to like any
     // other thread.
     if (getcontext(&main_thread.context) == -1) {
       return -1;
     }
+
+    /*
+     * Capture the template context exactly once.
+     * All future threads will copy this instead of calling getcontext(),
+     * eliminating one syscall per thread_create() call.
+     */
+    if (getcontext(&scheduler_template_ctx) == -1) {
+      return -1;
+    }
+
     main_thread.head_joiner = thread_head_ref_alloc(&main_thread);
     if (main_thread.head_joiner == NULL) {
       errno = ENOMEM;
       return -1;
     }
+
 #ifdef ENABLE_PREEMPTION
     init_prem(preemption_handler, 5);
 #endif
+
+    /*
+     * Pre-fill the stack pool with 8 stacks so the first thread_create()
+     * calls reuse mappings instead of triggering mmap()+mprotect() on the
+     * critical path. These stacks are recycled for free on subsequent joins.
+     */
+    for (int i = 0; i < 8; i++) {
+      struct stack_entry e;
+      if (stack_pool_alloc(&e) == 0)
+        stack_pool_push(&e);
+    }
+
     scheduler_initialized = 1;
   }
 
-  thread *newth = thread_obj_alloc();
+  /*
+   * Reuse a thread struct from the pool instead of calling malloc().
+   * Falls back to malloc() only when the pool is empty (cold start or
+   * high concurrency beyond MAX_POOLED_THREADS simultaneous threads).
+   */
+  thread *newth = thread_alloc();
   if (newth == NULL) {
-    errno = ENOMEM; // Out of memory
+    errno = ENOMEM;
     return -1;
   }
 
@@ -273,12 +281,14 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     return -1;
   }
 
-  if (getcontext(&newth->context) == -1) {
-    thread_obj_release(newth);
-    stack_pool_push(&stack_entry);
-    return -1;
-  }
-
+  /*
+   * Copy the template context instead of calling getcontext().
+   * makecontext() will overwrite the stack pointer and entry point anyway,
+   * so the template's register content does not matter — only the
+   * ucontext_t structure layout is needed. This avoids one syscall per
+   * thread creation (~10,000 syscalls saved on test 21 with nb=10000).
+   */
+  newth->context = scheduler_template_ctx;
   newth->context.uc_stack.ss_sp = stack_entry.stack;
   newth->context.uc_stack.ss_size = STACK_SIZE;
   newth->context.uc_stack.ss_flags = 0;
@@ -519,8 +529,13 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   // If an external thread joins the current head, it becomes the new head in O(1).
   if (target_is_head && !same_chain) {
+    thread **old_current_ref = current_thread->head_joiner;
     current_thread->head_joiner = target->head_joiner;
     *target->head_joiner = current_thread;
+
+    if (old_current_ref != NULL && *old_current_ref == current_thread) {
+      free(old_current_ref);
+    }
   } else {
     // current thread joins target's chain
     current_thread->head_joiner = target->head_joiner;

@@ -8,44 +8,31 @@
 #include <ucontext.h>
 #include <valgrind/valgrind.h>
 
-static struct stack_entry *stack_pool = NULL;
+/*
+ * Stack pool used to recycle thread stacks.
+ * Entries are stored in a static array with a simple size counter.
+ */
+#define MAX_POOLED_STACKS 512
+static struct stack_entry stack_pool[MAX_POOLED_STACKS];
 static int stack_pool_size = 0;
-static int stack_pool_cap = 0;
-static const int MAX_POOLED_STACKS = STACK_POOL_MAX_CACHED;
-
-static unsigned stack_register_for_valgrind(void *stack_base) {
-#ifdef NVALGRIND
-  (void)stack_base;
-  return 0;
-#else
-  if (!RUNNING_ON_VALGRIND) {
-    return 0;
-  }
-  return VALGRIND_STACK_REGISTER(stack_base, (char *)stack_base + STACK_SIZE);
-#endif
-}
-
-static void stack_deregister_for_valgrind(unsigned id) {
-#ifndef NVALGRIND
-  if (id != 0 && RUNNING_ON_VALGRIND) {
-    VALGRIND_STACK_DEREGISTER(id);
-  }
-#else
-  (void)id;
-#endif
-}
 
 /*
  * stack_pool_alloc — pop a stack from the pool, or allocate a fresh one.
+ *
+ * Fast path (pool non-empty): pop one entry in O(1).
+ * Slow path (pool empty): allocate a new mapping and set a guard page.
  */
 int stack_pool_alloc(struct stack_entry *entry) {
   if (stack_pool_size > 0) {
-    // Reuse a stack from the pool
+    /* Reuse a previously pooled stack. */
     *entry = stack_pool[--stack_pool_size];
     return 0;
   }
 
-  // Allocate a fresh stack with guard page
+  /*
+   * Allocate a fresh stack mapping with one guard page at the low address.
+   * The usable stack is placed above it because stacks grow downward.
+   */
   void *map = mmap(NULL,
                    STACK_SIZE + GUARD_SIZE,
                    PROT_READ | PROT_WRITE,
@@ -56,58 +43,45 @@ int stack_pool_alloc(struct stack_entry *entry) {
     return -1;
   }
 
+  /* Make the guard page inaccessible to catch stack overflows. */
   if (mprotect(map, GUARD_SIZE, PROT_NONE) == -1) {
     munmap(map, STACK_SIZE + GUARD_SIZE);
     return -1;
   }
 
+  /* The usable stack starts right after the guard page. */
   void *stack = (char *)map + GUARD_SIZE;
   entry->map = map;
   entry->stack = stack;
-  entry->valgrind_id = stack_register_for_valgrind(stack);
+  entry->valgrind_id = VALGRIND_STACK_REGISTER(stack, (char *)stack + STACK_SIZE);
   return 0;
 }
 
 /*
  * stack_pool_push — return a stack to the pool for reuse.
+ *
+ * If the pool is full, free the stack immediately.
+ * Otherwise, push it in O(1).
  */
 void stack_pool_push(struct stack_entry *entry) {
   if (stack_pool_size >= MAX_POOLED_STACKS) {
-    // Pool is full; free the stack immediately
-    stack_deregister_for_valgrind(entry->valgrind_id);
+    /* Pool full: release the mapping instead of storing it. */
+    VALGRIND_STACK_DEREGISTER(entry->valgrind_id);
     munmap(entry->map, STACK_SIZE + GUARD_SIZE);
     return;
   }
 
-  if (stack_pool_size >= stack_pool_cap) {
-    // Grow the pool array
-    int new_cap = (stack_pool_cap == 0) ? 8 : stack_pool_cap * 2;
-    if (new_cap > MAX_POOLED_STACKS)
-      new_cap = MAX_POOLED_STACKS;
-    struct stack_entry *new_pool = realloc(stack_pool, sizeof(*new_pool) * new_cap);
-    if (new_pool == NULL) {
-      // Realloc failed; free the stack instead
-      stack_deregister_for_valgrind(entry->valgrind_id);
-      munmap(entry->map, STACK_SIZE + GUARD_SIZE);
-      return;
-    }
-    stack_pool = new_pool;
-    stack_pool_cap = new_cap;
-  }
-
+  /* Normal path: store for later reuse. */
   stack_pool[stack_pool_size++] = *entry;
 }
 
 /*
- * stack_pool_free_all — drain the pool at program exit.
+ * stack_pool_free_all — drain all pooled stacks at program exit.
  */
 void stack_pool_free_all(void) {
   for (int i = 0; i < stack_pool_size; ++i) {
-    stack_deregister_for_valgrind(stack_pool[i].valgrind_id);
+    VALGRIND_STACK_DEREGISTER(stack_pool[i].valgrind_id);
     munmap(stack_pool[i].map, STACK_SIZE + GUARD_SIZE);
   }
-  free(stack_pool);
-  stack_pool = NULL;
   stack_pool_size = 0;
-  stack_pool_cap = 0;
 }

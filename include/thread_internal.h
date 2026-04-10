@@ -23,8 +23,8 @@ typedef struct thread {
   struct thread *joined_by;    // The thread that is joining on this thread (if any)
   struct thread *waiting_for;  // The thread that is waiting for this thread to terminate (if any)
   int priority;                // Thread priority for scheduling
-  int in_ready_queue; // Flag to indicate if the thread is currently in the ready queue (for
-                      // debugging)
+  int in_ready_queue; // Set to 1 when enqueued in ready queue to prevent duplicate insertions,
+                      // reset to 0 when dequeued.
   struct thread **head_joiner; // Shared reference to the head of the joining chain
 #ifdef ENABLE_SIGNAL
   unsigned int pending_signals; // Bitmask of pending internal signals
