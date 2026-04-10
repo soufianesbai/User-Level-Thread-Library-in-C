@@ -259,6 +259,12 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->in_ready_queue = 0;
   newth->joined_by = NULL;
   newth->waiting_for = NULL;
+#ifdef ENABLE_SIGNAL
+  newth->pending_signals = 0;
+  newth->blocked_signals = 0;
+  newth->waited_signals = 0;
+  newth->waiting_for_signal = 0;
+#endif
   newth->head_joiner = thread_head_ref_alloc(newth);
   if (newth->head_joiner == NULL) {
     thread_obj_release(newth);
@@ -610,8 +616,4 @@ int thread_set_priority(thread_t t, int prio) {
 #endif
 
   return 0;
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> 67aa047 (creation d'un fichier thread_sig.c qui contient les fonctions relatives au signaux)
