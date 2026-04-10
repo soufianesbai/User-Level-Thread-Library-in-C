@@ -51,6 +51,30 @@ static thread *thread_pool[MAX_POOLED_THREADS];
 static int thread_pool_size = 0;
 
 /*
+ * thread_pool_free_all — free cached thread objects at process exit.
+ */
+static void thread_pool_free_all(void) {
+  for (int i = 0; i < thread_pool_size; ++i) {
+    thread *t = thread_pool[i];
+    if (t == NULL) {
+      continue;
+    }
+    if (t->head_joiner != NULL && *t->head_joiner == t) {
+      free(t->head_joiner);
+      t->head_joiner = NULL;
+    }
+    free(t);
+    thread_pool[i] = NULL;
+  }
+  thread_pool_size = 0;
+
+  if (main_thread.head_joiner != NULL && *main_thread.head_joiner == &main_thread) {
+    free(main_thread.head_joiner);
+    main_thread.head_joiner = NULL;
+  }
+}
+
+/*
  * thread_alloc — pop a thread struct from the pool or malloc a fresh one.
  */
 static thread *thread_alloc(void) {
@@ -198,6 +222,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   if (!scheduler_initialized) {
     TAILQ_INIT(&ready_queue);
     thread_cleanup_register();
+    atexit(thread_pool_free_all);
 
     // Initialize the main thread's context so it can be switched to like any
     // other thread.
