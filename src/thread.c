@@ -610,4 +610,8 @@ int thread_set_priority(thread_t t, int prio) {
 #endif
 
   return 0;
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> 67aa047 (creation d'un fichier thread_sig.c qui contient les fonctions relatives au signaux)
