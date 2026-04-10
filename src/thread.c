@@ -101,13 +101,17 @@ static thread **thread_head_ref_alloc(thread *owner) {
 }
 
 static void thread_obj_release(thread *t) {
-  if (t == NULL || t == &main_thread)
+  if (t == NULL || t == &main_thread) {
     return;
+  }
 
-  if (t->head_joiner != NULL) {
+  if (t->head_joiner != NULL && *t->head_joiner == t) {
     free(t->head_joiner);
     t->head_joiner = NULL;
   }
+
+  // The object is recycled; do not keep a shared chain pointer in the pool.
+  t->head_joiner = NULL;
 
   thread_free(t);
 }
