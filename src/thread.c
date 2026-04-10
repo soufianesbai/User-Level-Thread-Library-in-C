@@ -50,6 +50,10 @@ static ucontext_t scheduler_template_ctx;
 static thread *thread_pool[MAX_POOLED_THREADS];
 static int thread_pool_size = 0;
 
+static thread ***head_ref_pool = NULL;
+static int head_ref_pool_size = 0;
+static int head_ref_pool_cap = 0;
+
 /*
  * thread_pool_free_all — free cached thread objects at process exit.
  */
@@ -63,13 +67,14 @@ static void thread_pool_free_all(void) {
   }
   thread_pool_size = 0;
 
-  // Only free if the block still belongs to main_thread.
-  // If main_thread joined a chain, head_joiner was transferred and
-  // already freed by thread_obj_release() — freeing it again is a double free.
-  if (main_thread.head_joiner != NULL && *main_thread.head_joiner == &main_thread) {
-    free(main_thread.head_joiner);
-    main_thread.head_joiner = NULL;
+  for (int i = 0; i < head_ref_pool_size; ++i) {
+    free(head_ref_pool[i]);
+    head_ref_pool[i] = NULL;
   }
+  free(head_ref_pool);
+  head_ref_pool = NULL;
+  head_ref_pool_size = 0;
+  head_ref_pool_cap = 0;
 }
 
 /*
@@ -97,17 +102,25 @@ static thread **thread_head_ref_alloc(thread *owner) {
     return NULL;
   }
   *ref = owner;
+
+  if (head_ref_pool_size >= head_ref_pool_cap) {
+    int new_cap = (head_ref_pool_cap == 0) ? 64 : head_ref_pool_cap * 2;
+    thread ***new_pool = realloc(head_ref_pool, sizeof(*new_pool) * new_cap);
+    if (new_pool == NULL) {
+      free(ref);
+      return NULL;
+    }
+    head_ref_pool = new_pool;
+    head_ref_pool_cap = new_cap;
+  }
+
+  head_ref_pool[head_ref_pool_size++] = ref;
   return ref;
 }
 
 static void thread_obj_release(thread *t) {
   if (t == NULL || t == &main_thread) {
     return;
-  }
-
-  if (t->head_joiner != NULL && *t->head_joiner == t) {
-    free(t->head_joiner);
-    t->head_joiner = NULL;
   }
 
   // The object is recycled; do not keep a shared chain pointer in the pool.
