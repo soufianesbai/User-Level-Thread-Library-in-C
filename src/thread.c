@@ -56,15 +56,17 @@ static int thread_pool_size = 0;
 static void thread_pool_free_all(void) {
   for (int i = 0; i < thread_pool_size; ++i) {
     thread *t = thread_pool[i];
-    if (t == NULL) {
+    if (t == NULL)
       continue;
-    }
     free(t);
     thread_pool[i] = NULL;
   }
   thread_pool_size = 0;
 
-  if (main_thread.head_joiner != NULL) {
+  // Only free if the block still belongs to main_thread.
+  // If main_thread joined a chain, head_joiner was transferred and
+  // already freed by thread_obj_release() — freeing it again is a double free.
+  if (main_thread.head_joiner != NULL && *main_thread.head_joiner == &main_thread) {
     free(main_thread.head_joiner);
     main_thread.head_joiner = NULL;
   }
@@ -553,13 +555,8 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   // If an external thread joins the current head, it becomes the new head in O(1).
   if (target_is_head && !same_chain) {
-    thread **old_current_ref = current_thread->head_joiner;
     current_thread->head_joiner = target->head_joiner;
     *target->head_joiner = current_thread;
-
-    if (old_current_ref != NULL && *old_current_ref == current_thread) {
-      free(old_current_ref);
-    }
   } else {
     // current thread joins target's chain
     current_thread->head_joiner = target->head_joiner;
