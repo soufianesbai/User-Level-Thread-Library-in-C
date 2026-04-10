@@ -1,8 +1,6 @@
 CC = gcc
 CLANG_FORMAT ?= clang-format
 PYTHON ?= python3
-JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-MAKEFLAGS += -j$(JOBS)
 CFLAGS  = -Wall -Wextra -O2 -g -fPIC
 LDFLAGS = -lpthread
 RPATH_FLAGS = -Wl,-rpath,'$$ORIGIN/../lib:$$ORIGIN/..'
