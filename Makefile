@@ -1,6 +1,8 @@
 CC = gcc
 CLANG_FORMAT ?= clang-format
 PYTHON ?= python3
+JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+MAKEFLAGS += -j$(JOBS)
 CFLAGS  = -Wall -Wextra -O2 -g -fPIC
 LDFLAGS = -lpthread
 RPATH_FLAGS = -Wl,-rpath,'$$ORIGIN/../lib:$$ORIGIN/..'
@@ -81,7 +83,7 @@ pthreads: compat-headers
 	@mkdir -p bin
 	@for t in $(TEST_BINS); do \
 		$(CC) $(CPPFLAGS) $(CFLAGS) -DUSE_PTHREAD -c $(TEST_DIR)/$$t.c -o bin/$$t-pthread.o; \
-		$(CC) $(CPPFLAGS) $(CFLAGS) bin/$$t-pthread.o $(SRC) -o bin/$$t-pthread $(LDFLAGS); \
+		$(CC) $(CPPFLAGS) $(CFLAGS) bin/$$t-pthread.o -o bin/$$t-pthread $(LDFLAGS); \
 		rm -f bin/$$t-pthread.o; \
 	done
 
