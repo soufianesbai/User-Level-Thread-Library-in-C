@@ -12,6 +12,10 @@
 #define THREAD_SCHED_POLICY THREAD_SCHED_FIFO
 #endif
 
+#ifdef ENABLE_SIGNAL
+#include <stdint.h>
+#endif
+
 #ifndef USE_PTHREAD
 
 #include <sys/queue.h>
@@ -71,6 +75,13 @@ int thread_mutex_unlock(thread_mutex_t *mutex);
 
 int thread_set_priority(thread_t t, int prio);
 
+#ifdef ENABLE_SIGNAL
+typedef uint32_t thread_sigset_t;
+
+int thread_signal_send(thread_t target, int sig);
+int thread_sigwait(thread_sigset_t set, int *sig);
+#endif
+
 #else /* USE_PTHREAD */
 
 /* Si on compile avec -DUSE_PTHREAD, ce sont les pthreads qui sont utilisés */
@@ -90,6 +101,13 @@ int thread_set_priority(thread_t t, int prio);
 #define thread_mutex_destroy pthread_mutex_destroy
 #define thread_mutex_lock pthread_mutex_lock
 #define thread_mutex_unlock pthread_mutex_unlock
+
+#ifdef ENABLE_SIGNAL
+/* Si on compile avec ENABLE_SIGNAL=1 on a le moyen de faire attendre un thread et de le réveiller avec les signaux */
+typedef uint32_t thread_sigset_t;
+#define thread_signal_send(target, sig) ((void)(target), (void)(sig), -1)
+#define thread_sigwait(set, sig) ((void)(set), (void)(sig), -1)
+#endif
 
 #endif /* USE_PTHREAD */
 
