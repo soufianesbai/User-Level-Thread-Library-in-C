@@ -25,12 +25,7 @@ typedef struct thread {
   int priority;                // Thread priority for scheduling
   int in_ready_queue; // Flag to indicate if the thread is currently in the ready queue (for
                       // debugging)
-#ifdef ENABLE_SIGNAL
-  unsigned int pending_signals; // Bitmask of pending internal signals
-  unsigned int blocked_signals; // Bitmask of masked internal signals
-  unsigned int waited_signals;  // Bitmask used by thread_sigwait()
-  int waiting_for_signal;       // 1 when blocked inside thread_sigwait()
-#endif
+  struct thread **head_joiner; // Shared reference to the head of the joining chain
 } thread;
 
 void thread_cleanup_register(void);

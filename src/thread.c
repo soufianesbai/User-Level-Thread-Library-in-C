@@ -3,6 +3,7 @@
 #include "thread_internal.h"
 #include <assert.h>
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/queue.h>
@@ -14,11 +15,12 @@ static struct thread_queue ready_queue;
 
 // The main thread is initialized at the start of the program and will be used
 // as the initial context for the main execution flow.
-static thread main_thread = {0,
+static thread main_thread = {.id = 0,
                              .state = THREAD_RUNNING,
                              .joined_by = NULL,
                              .priority = THREAD_DEFAULT_PRIORITY,
-                             .waiting_for = NULL};
+                             .waiting_for = NULL,
+                             .head_joiner = NULL};
 static thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
@@ -38,9 +40,23 @@ static thread *thread_obj_alloc(void) {
   return malloc(sizeof(thread));
 }
 
+static thread **thread_head_ref_alloc(thread *owner) {
+  thread **ref = malloc(sizeof(*ref));
+  if (ref == NULL) {
+    return NULL;
+  }
+  *ref = owner;
+  return ref;
+}
+
 static void thread_obj_release(thread *t) {
   if (t == NULL || t == &main_thread) {
     return;
+  }
+
+  if (t->head_joiner != NULL && *t->head_joiner == t) {
+    free(t->head_joiner);
+    t->head_joiner = NULL;
   }
 
   if (thread_obj_pool_size >= THREAD_OBJ_POOL_MAX_CACHED) {
@@ -188,6 +204,11 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     if (getcontext(&main_thread.context) == -1) {
       return -1;
     }
+    main_thread.head_joiner = thread_head_ref_alloc(&main_thread);
+    if (main_thread.head_joiner == NULL) {
+      errno = ENOMEM;
+      return -1;
+    }
 #ifdef ENABLE_PREEMPTION
     init_prem(preemption_handler, 5);
 #endif
@@ -218,12 +239,13 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->in_ready_queue = 0;
   newth->joined_by = NULL;
   newth->waiting_for = NULL;
-#ifdef ENABLE_SIGNAL
-  newth->pending_signals = 0;
-  newth->blocked_signals = 0;
-  newth->waited_signals = 0;
-  newth->waiting_for_signal = 0;
-#endif
+  newth->head_joiner = thread_head_ref_alloc(newth);
+  if (newth->head_joiner == NULL) {
+    thread_obj_release(newth);
+    stack_pool_push(&stack_entry);
+    errno = ENOMEM;
+    return -1;
+  }
 
   if (getcontext(&newth->context) == -1) {
     thread_obj_release(newth);
@@ -437,20 +459,29 @@ int thread_join(thread_t thread_handle, void **retval) {
   thread *target = (thread *)thread_handle;
 
   // Multiple join check: a thread can only be joined by one other thread
-  if (target->joined_by != NULL) {
+  // if (target->joined_by != NULL) {
+  //   errno = EINVAL;
+  //   return -1;
+  // }
+
+  if (target == current_thread) {
+    errno = EDEADLK;
+    return EDEADLK;
+  }
+
+  if (target->head_joiner == NULL || current_thread->head_joiner == NULL) {
     errno = EINVAL;
     return -1;
   }
 
-  // Deadlock check: follow waiting_for from target.
-  // If we reach current_thread, joining would create a cycle.
-  thread *cursor = target;
-  while (cursor != NULL) {
-    if (cursor == current_thread) {
-      errno = EDEADLK;
-      return EDEADLK;
-    }
-    cursor = cursor->waiting_for;
+  thread *target_head = *target->head_joiner;
+  int target_is_head = (target_head == target);
+  int same_chain = (current_thread->head_joiner == target->head_joiner);
+
+  // Joining the head from inside the same chain would create a cycle.
+  if (target_is_head && same_chain) {
+    errno = EDEADLK;
+    return EDEADLK;
   }
 
 #ifdef ENABLE_PREEMPTION
@@ -459,6 +490,20 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   // Mark the current thread as the joiner of the target
   target->joined_by = current_thread;
+
+  // If an external thread joins the current head, it becomes the new head in O(1).
+  if (target_is_head && !same_chain) {
+    thread **old_current_ref = current_thread->head_joiner;
+    current_thread->head_joiner = target->head_joiner;
+    *target->head_joiner = current_thread;
+
+    if (old_current_ref != NULL && *old_current_ref == current_thread) {
+      free(old_current_ref);
+    }
+  } else {
+    // current thread joins target's chain
+    current_thread->head_joiner = target->head_joiner;
+  }
 
   if (target->state != THREAD_TERMINATED) {
     current_thread->state = THREAD_BLOCKED;
@@ -474,7 +519,7 @@ int thread_join(thread_t thread_handle, void **retval) {
       preem_unblock();
 #endif
       errno = EDEADLK;
-      return -1;
+      return EDEADLK;
     }
 
     // Yield exactly once. We will return here only when thread_exit()
