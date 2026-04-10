@@ -29,6 +29,10 @@ static thread **thread_obj_pool = NULL;
 static int thread_obj_pool_size = 0;
 static int thread_obj_pool_cap = 0;
 
+static thread ***head_ref_pool = NULL;
+static int head_ref_pool_size = 0;
+static int head_ref_pool_cap = 0;
+
 #ifndef THREAD_OBJ_POOL_MAX_CACHED
 #define THREAD_OBJ_POOL_MAX_CACHED 16384
 #endif
@@ -46,17 +50,25 @@ static thread **thread_head_ref_alloc(thread *owner) {
     return NULL;
   }
   *ref = owner;
+
+  if (head_ref_pool_size >= head_ref_pool_cap) {
+    int new_cap = (head_ref_pool_cap == 0) ? 64 : head_ref_pool_cap * 2;
+    thread ***new_pool = realloc(head_ref_pool, sizeof(*new_pool) * new_cap);
+    if (new_pool == NULL) {
+      free(ref);
+      return NULL;
+    }
+    head_ref_pool = new_pool;
+    head_ref_pool_cap = new_cap;
+  }
+
+  head_ref_pool[head_ref_pool_size++] = ref;
   return ref;
 }
 
 static void thread_obj_release(thread *t) {
   if (t == NULL || t == &main_thread) {
     return;
-  }
-
-  if (t->head_joiner != NULL && *t->head_joiner == t) {
-    free(t->head_joiner);
-    t->head_joiner = NULL;
   }
 
   if (thread_obj_pool_size >= THREAD_OBJ_POOL_MAX_CACHED) {
@@ -89,6 +101,14 @@ static void thread_obj_pool_free_all(void) {
   thread_obj_pool = NULL;
   thread_obj_pool_size = 0;
   thread_obj_pool_cap = 0;
+
+  for (int i = 0; i < head_ref_pool_size; ++i) {
+    free(head_ref_pool[i]);
+  }
+  free(head_ref_pool);
+  head_ref_pool = NULL;
+  head_ref_pool_size = 0;
+  head_ref_pool_cap = 0;
 }
 
 struct thread_queue *thread_get_ready_queue(void) {
@@ -493,13 +513,8 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   // If an external thread joins the current head, it becomes the new head in O(1).
   if (target_is_head && !same_chain) {
-    thread **old_current_ref = current_thread->head_joiner;
     current_thread->head_joiner = target->head_joiner;
     *target->head_joiner = current_thread;
-
-    if (old_current_ref != NULL && *old_current_ref == current_thread) {
-      free(old_current_ref);
-    }
   } else {
     // current thread joins target's chain
     current_thread->head_joiner = target->head_joiner;
