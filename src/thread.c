@@ -59,16 +59,12 @@ static void thread_pool_free_all(void) {
     if (t == NULL) {
       continue;
     }
-    if (t->head_joiner != NULL && *t->head_joiner == t) {
-      free(t->head_joiner);
-      t->head_joiner = NULL;
-    }
     free(t);
     thread_pool[i] = NULL;
   }
   thread_pool_size = 0;
 
-  if (main_thread.head_joiner != NULL && *main_thread.head_joiner == &main_thread) {
+  if (main_thread.head_joiner != NULL) {
     free(main_thread.head_joiner);
     main_thread.head_joiner = NULL;
   }
@@ -111,6 +107,9 @@ static void thread_obj_release(thread *t) {
     free(t->head_joiner);
     t->head_joiner = NULL;
   }
+
+  // The object is recycled; do not keep a shared chain pointer in the pool.
+  t->head_joiner = NULL;
 
   thread_free(t);
 }
