@@ -24,6 +24,9 @@ class TestCase:
 
 
 CUSTOM_TESTS: list[TestCase] = [
+    TestCase("21-create-many", ["100"]),
+    TestCase("22-create-many-recursive", ["100"]),
+    TestCase("23-create-many-once", ["100"]),
     TestCase("51-fibonacci", ["18"]),
     TestCase("61-mutex", ["40"]),
     TestCase("62-mutex", ["10"]),
@@ -241,7 +244,14 @@ def main() -> int:
 
     # Sélection des tests à exécuter
     if args.custom_tests:
-        selected_tests = [TestCase(args.test, [])] if args.test is not None else CUSTOM_TESTS
+        if args.test is not None:
+            # Chercher le test dans CUSTOM_TESTS pour préserver ses args
+            selected_tests = [t for t in CUSTOM_TESTS if t.name == args.test]
+            if not selected_tests:
+                print(f"Test '{args.test}' not found in CUSTOM_TESTS")
+                return 2
+        else:
+            selected_tests = CUSTOM_TESTS
     else:
         print("Ce script ne gère plus le mode comparaison globale; utilise --custom-tests.")
         return 2
