@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import math
 import os
 import statistics
 import subprocess
@@ -27,6 +28,9 @@ CUSTOM_TESTS: list[TestCase] = [
     TestCase("21-create-many", ["100"]),
     TestCase("22-create-many-recursive", ["100"]),
     TestCase("23-create-many-once", ["100"]),
+    TestCase("31-switch-many", ["100", "100"]),
+    TestCase("32-switch-many-join", ["100", "100"]),
+    TestCase("33-switch-many-cascade", ["100", "100"]),
     TestCase("51-fibonacci", ["18"]),
     TestCase("61-mutex", ["40"]),
     TestCase("62-mutex", ["10"]),
@@ -45,32 +49,12 @@ def run_cmd(cmd: list[str], cwd: Path) -> None:
         raise RuntimeError(f"Commande echouee ({result.returncode}): {' '.join(cmd)}")
 
 
-def timed_run(cmd: list[str], cwd: Path, env: dict[str, str], timeout_s: int) -> tuple[bool, float, str]:
-    t0 = time.perf_counter()
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(cwd),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
-        dt = time.perf_counter() - t0
-        ok = proc.returncode == 0
-        if ok:
-            return True, dt, ""
-        detail = (
-            f"code={proc.returncode}; "
-            f"stdout={proc.stdout[-200:].strip()}; "
-            f"stderr={proc.stderr[-200:].strip()}"
-        )
-        return False, dt, detail
-    except subprocess.TimeoutExpired:
-        dt = time.perf_counter() - t0
-        return False, dt, f"timeout>{timeout_s}s"
+def format_run_error(proc: subprocess.CompletedProcess[str]) -> str:
+    return (
+        f"code={proc.returncode}; "
+        f"stdout={proc.stdout[-200:].strip()}; "
+        f"stderr={proc.stderr[-200:].strip()}"
+    )
 
 
 def median_or_nan(values: list[float]) -> float:
@@ -109,6 +93,52 @@ def parse_core_counts(value: Optional[str]) -> List[int]:
     return sorted(set(core_counts))
 
 
+def default_thread_counts() -> list[int]:
+    return [10, 50, 100, 200]
+
+
+def parse_thread_counts(value: Optional[str]) -> List[int]:
+    if not value:
+        return default_thread_counts()
+    thread_counts = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        thread_count = int(item)
+        if thread_count < 1:
+            raise ValueError("Chaque valeur de --threads doit etre >= 1")
+        thread_counts.append(thread_count)
+    if not thread_counts:
+        raise ValueError("--threads ne contient aucune valeur valide")
+    return sorted(set(thread_counts))
+
+
+def make_axes(test_count: int):
+    if test_count == 1:
+        fig, axes = plt.subplots(1, 1, figsize=(8, 5), sharex=True)
+        return fig, [axes]
+
+    ncols = 2 if test_count <= 4 else 3
+    nrows = math.ceil(test_count / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(6 * ncols, 3.8 * nrows), sharex=True)
+    if hasattr(axes, "ravel"):
+        flat_axes = list(axes.ravel())
+    else:
+        flat_axes = [axes]
+    return fig, flat_axes
+
+
+def supports_thread_scaling(test: TestCase) -> bool:
+    return (test.name.startswith("2") or test.name.startswith("3")) and len(test.args) >= 1
+
+
+def with_thread_count_args(test: TestCase, thread_count: int) -> list[str]:
+    args = list(test.args)
+    args[0] = str(thread_count)
+    return args
+
+
 def get_affinity_prefix(core_count: int) -> Tuple[List[str], Optional[Callable[[], None]]]:
     if hasattr(os, "sched_setaffinity"):
         core_set = set(range(core_count))
@@ -124,6 +154,89 @@ def get_affinity_prefix(core_count: int) -> Tuple[List[str], Optional[Callable[[
     return [], None
 
 
+def timed_run(
+    cmd: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    timeout_s: int,
+    core_count: Optional[int] = None,
+) -> tuple[bool, float, str]:
+    prefix: list[str] = []
+    preexec: Optional[Callable[[], None]] = None
+    if core_count is not None:
+        prefix, preexec = get_affinity_prefix(core_count)
+
+    t0 = time.perf_counter()
+    try:
+        proc = subprocess.run(
+            prefix + cmd,
+            cwd=str(cwd),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+            preexec_fn=preexec,
+        )
+        dt = time.perf_counter() - t0
+        if proc.returncode == 0:
+            return True, dt, ""
+        return False, dt, format_run_error(proc)
+    except subprocess.TimeoutExpired:
+        dt = time.perf_counter() - t0
+        return False, dt, f"timeout>{timeout_s}s"
+
+
+def run_sweep(
+    tests: list[TestCase],
+    values: list[int],
+    runs: int,
+    total: int,
+    done_start: int,
+    repo: Path,
+    bin_dir: Path,
+    env: dict[str, str],
+    timeout_s: int,
+    custom_store: dict[str, dict[int, list[float]]],
+    pthread_store: dict[str, dict[int, list[float]]],
+    args_for_value: Callable[[TestCase, int], list[str]],
+    core_for_value: Callable[[int], Optional[int]],
+    progress_for_value: Callable[[TestCase, str, int], str],
+    error_for_value: Callable[[TestCase, str, int, str], str],
+) -> tuple[int, int]:
+    done = done_start
+    success_count = 0
+
+    for test in tests:
+        for value in values:
+            test_args = args_for_value(test, value)
+            core_count = core_for_value(value)
+            for _ in range(1, runs + 1):
+                for impl, exe in [
+                    ("custom", bin_dir / test.name),
+                    ("pthread", bin_dir / f"{test.name}-pthread"),
+                ]:
+                    done += 1
+                    cmd = [str(exe)] + test_args
+                    print(f"[{done}/{total}] {progress_for_value(test, impl, value)}", flush=True)
+                    ok, dt, detail = timed_run(
+                        cmd,
+                        cwd=repo,
+                        env=env,
+                        timeout_s=timeout_s,
+                        core_count=core_count,
+                    )
+                    if ok:
+                        success_count += 1
+                        target = custom_store if impl == "custom" else pthread_store
+                        target[test.name][value].append(dt)
+                    else:
+                        print(error_for_value(test, impl, value, detail), flush=True)
+
+    return done, success_count
+
+
 def plot_scaling(
     path: Path,
     selected_tests: list[TestCase],
@@ -133,12 +246,7 @@ def plot_scaling(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if len(selected_tests) == 1:
-        fig, axes = plt.subplots(1, 1, figsize=(8, 5), sharex=True)
-        axes = [axes]
-    else:
-        fig, axes = plt.subplots(2, 2, figsize=(14, 9), sharex=True)
-        axes = [axis for row in axes for axis in row]
+    fig, axes = make_axes(len(selected_tests))
 
     for axis in axes[len(selected_tests):]:
         axis.axis("off")
@@ -162,44 +270,40 @@ def plot_scaling(
     plt.close(fig)
 
 
-def timed_run_limited(
-    cmd: list[str],
-    cwd: Path,
-    env: dict[str, str],
-    timeout_s: int,
-    core_count: Optional[int] = None
-) -> tuple[bool, float, str]:
-    if core_count is None:
-        return timed_run(cmd, cwd, env, timeout_s)
+def plot_thread_scaling(
+    path: Path,
+    selected_tests: list[TestCase],
+    thread_counts: list[int],
+    custom_times: dict[str, dict[int, list[float]]],
+    pthread_times: dict[str, dict[int, list[float]]],
+    fixed_core_count: int,
+) -> None:
+    if not selected_tests:
+        return
 
-    prefix, preexec = get_affinity_prefix(core_count)
-    run_cmd = prefix + cmd
-    t0 = time.perf_counter()
-    try:
-        proc = subprocess.run(
-            run_cmd,
-            cwd=str(cwd),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-            preexec_fn=preexec,
-        )
-        dt = time.perf_counter() - t0
-        ok = proc.returncode == 0
-        if ok:
-            return True, dt, ""
-        detail = (
-            f"code={proc.returncode}; "
-            f"stdout={proc.stdout[-200:].strip()}; "
-            f"stderr={proc.stderr[-200:].strip()}"
-        )
-        return False, dt, detail
-    except subprocess.TimeoutExpired:
-        dt = time.perf_counter() - t0
-        return False, dt, f"timeout>{timeout_s}s"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = make_axes(len(selected_tests))
+
+    for axis in axes[len(selected_tests):]:
+        axis.axis("off")
+
+    for axis, test in zip(axes, selected_tests):
+        y_custom = [median_or_nan(custom_times[test.name][thread_count]) for thread_count in thread_counts]
+        y_pthread = [median_or_nan(pthread_times[test.name][thread_count]) for thread_count in thread_counts]
+
+        axis.plot(thread_counts, y_custom, marker="o", linewidth=2, label="thread.c")
+        axis.plot(thread_counts, y_pthread, marker="o", linewidth=2, label="pthread")
+        axis.set_title(test.name)
+        axis.set_xlabel("Nombre de threads")
+        axis.set_ylabel("Temps median (s)")
+        axis.grid(True, axis="y", alpha=0.3)
+        axis.set_xticks(thread_counts)
+        axis.legend()
+
+    fig.suptitle(f"Temps d'execution en fonction du nombre de threads (coeurs fixes={fixed_core_count})")
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
 
 
 def main() -> int:
@@ -210,6 +314,7 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=20, help="Timeout par test en secondes")
     parser.add_argument("--png", default="bench/results.png")
     parser.add_argument("--cores", default=None, help="Liste de coeurs limites, ex: 1,2,4,8")
+    parser.add_argument("--threads", default=None, help="Liste de nombres de threads pour tests 20/30, ex: 10,50,100")
     parser.add_argument(
         "--test",
         default=None,
@@ -258,6 +363,7 @@ def main() -> int:
 
     try:
         core_counts = parse_core_counts(args.cores) if args.custom_tests else [1]
+        thread_counts = parse_thread_counts(args.threads) if args.custom_tests else [1]
     except ValueError as exc:
         print(str(exc))
         return 2
@@ -269,45 +375,80 @@ def main() -> int:
         t.name: {core: [] for core in core_counts} for t in selected_tests
     }
 
-    total = len(selected_tests) * args.runs * 2 * len(core_counts)
-    done = 0
-    success_count = 0
+    thread_scaling_tests = [test for test in selected_tests if supports_thread_scaling(test)]
+    custom_thread_times: dict[str, dict[int, list[float]]] = {
+        t.name: {thread_count: [] for thread_count in thread_counts} for t in thread_scaling_tests
+    }
+    pthread_thread_times: dict[str, dict[int, list[float]]] = {
+        t.name: {thread_count: [] for thread_count in thread_counts} for t in thread_scaling_tests
+    }
 
-    for test in selected_tests:
-        for core_count in core_counts:
-            for run_id in range(1, args.runs + 1):
-                for impl, exe in [
-                    ("custom", bin_dir / test.name),
-                    ("pthread", bin_dir / f"{test.name}-pthread"),
-                ]:
-                    done += 1
-                    cmd = [str(exe)] + test.args
-                    print(f"[{done}/{total}] {test.name} {impl} cores={core_count}", flush=True)
-                    ok, dt, detail = timed_run_limited(
-                        cmd,
-                        cwd=repo,
-                        env=env,
-                        timeout_s=args.timeout,
-                        core_count=core_count if args.custom_tests else None,
-                    )
-                    if ok:
-                        success_count += 1
-                        if impl == "custom":
-                            custom_times[test.name][core_count].append(dt)
-                        else:
-                            pthread_times[test.name][core_count].append(dt)
-                    else:
-                        print(f"  -> echec ({impl} {test.name}, cores={core_count}): {detail}", flush=True)
+    fixed_core_for_thread_scaling = max(core_counts)
+
+    total_core_runs = len(selected_tests) * args.runs * 2 * len(core_counts)
+    total_thread_runs = len(thread_scaling_tests) * args.runs * 2 * len(thread_counts)
+    total = total_core_runs + total_thread_runs
+    done, success_count = run_sweep(
+        tests=selected_tests,
+        values=core_counts,
+        runs=args.runs,
+        total=total,
+        done_start=0,
+        repo=repo,
+        bin_dir=bin_dir,
+        env=env,
+        timeout_s=args.timeout,
+        custom_store=custom_times,
+        pthread_store=pthread_times,
+        args_for_value=lambda test, _core: test.args,
+        core_for_value=lambda core: core,
+        progress_for_value=lambda test, impl, core: f"{test.name} {impl} cores={core}",
+        error_for_value=lambda test, impl, core, detail: f"  -> echec ({impl} {test.name}, cores={core}): {detail}",
+    )
+
+    done, thread_success_count = run_sweep(
+        tests=thread_scaling_tests,
+        values=thread_counts,
+        runs=args.runs,
+        total=total,
+        done_start=done,
+        repo=repo,
+        bin_dir=bin_dir,
+        env=env,
+        timeout_s=args.timeout,
+        custom_store=custom_thread_times,
+        pthread_store=pthread_thread_times,
+        args_for_value=with_thread_count_args,
+        core_for_value=lambda _thread_count: fixed_core_for_thread_scaling,
+        progress_for_value=lambda test, impl, thread_count: (
+            f"{test.name} {impl} threads={thread_count} cores={fixed_core_for_thread_scaling}"
+        ),
+        error_for_value=lambda test, impl, thread_count, detail: (
+            f"  -> echec ({impl} {test.name}, threads={thread_count}, cores={fixed_core_for_thread_scaling}): {detail}"
+        ),
+    )
+    success_count += thread_success_count
 
     png_path = (repo / args.png).resolve()
+    png_thread_path = png_path.with_name(f"{png_path.stem}_threads{png_path.suffix}")
 
     plot_scaling(png_path, selected_tests, core_counts, custom_times, pthread_times)
+    plot_thread_scaling(
+        png_thread_path,
+        thread_scaling_tests,
+        thread_counts,
+        custom_thread_times,
+        pthread_thread_times,
+        fixed_core_for_thread_scaling,
+    )
 
     print(f"Graphe : {png_path}")
+    if thread_scaling_tests:
+        print(f"Graphe threads (tests 20/30): {png_thread_path}")
     print(f"Executions reussies: {success_count}/{total}")
     return 0
 
-#commande pour compiler pour un test exemple de sum : make graphs ARGS="--custom-tests --test sum --png bench/results_sum.png"
+#commande pour compiler pour un test exemple du test 33 : make graphs ARGS="--custom-tests --test 33-switch-many-cascade --png bench/33.png --cores 1,2,4,8 --threads 10,50,100,200 --runs 3"
 if __name__ == "__main__":
     raise SystemExit(main())
 
