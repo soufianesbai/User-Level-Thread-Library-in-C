@@ -16,7 +16,7 @@
  * Stack pool used to recycle thread stacks.
  * Entries are stored in a static array with a simple size counter.
  */
-#define MAX_POOLED_STACKS 4096
+#define MAX_POOLED_STACKS 16384
 static struct stack_entry stack_pool[MAX_POOLED_STACKS];
 static int stack_pool_size = 0;
 
@@ -79,6 +79,10 @@ void stack_pool_push(struct stack_entry *entry) {
 
   /* Normal path: store for later reuse. */
   stack_pool[stack_pool_size++] = *entry;
+}
+
+int stack_pool_empty(void) {
+  return stack_pool_size == 0;
 }
 
 /*

@@ -44,7 +44,7 @@ static ucontext_t scheduler_template_ctx;
  * free() on every cycle. A fixed-size pool of recycled structs replaces those
  * with a pointer array push/pop in O(1).
  */
-#define MAX_POOLED_THREADS 10000
+#define MAX_POOLED_THREADS 50000
 static thread *thread_pool[MAX_POOLED_THREADS];
 static int thread_pool_size = 0;
 
@@ -59,7 +59,7 @@ static int head_ref_active_index = 0;
 static struct stack_entry deferred_stacks[MAX_DEFERRED_STACKS];
 static int deferred_stack_count = 0;
 
-#define STACK_PREFILL_COUNT 256
+#define STACK_PREFILL_COUNT 2048
 
 static void reclaim_deferred_stacks_batch(int budget) {
   while (deferred_stack_count > 0 && budget-- > 0) {
@@ -335,10 +335,11 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
 
   // Allocate or reuse stack from pool.
   struct stack_entry stack_entry;
-  reclaim_deferred_stacks_batch(64);
+  if (stack_pool_empty() && deferred_stack_count > 0)
+    reclaim_deferred_stacks_all();
   int alloc_retries = 0;
   while (stack_pool_alloc(&stack_entry) == -1) {
-    reclaim_deferred_stacks_batch(64);
+    reclaim_deferred_stacks_all();
     if (TAILQ_EMPTY(&ready_queue) || alloc_retries++ >= 4096) {
       thread_obj_release(newth);
       errno = ENOMEM;
@@ -409,7 +410,8 @@ int thread_yield(void) {
   preem_block();
 #endif
 
-  reclaim_deferred_stacks_batch(64);
+  if (deferred_stack_count > 0)
+    reclaim_deferred_stacks_batch(64);
 
   thread *prev = current_thread;
 
@@ -577,8 +579,6 @@ void thread_exit(void *retval) {
  *   - This guarantees the joiner wakes up exactly once, with no polling.
  */
 int thread_join(thread_t thread_handle, void **retval) {
-  reclaim_deferred_stacks_batch(64);
-
   if (thread_handle == NULL) {
     errno = EINVAL;
     return -1;

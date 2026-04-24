@@ -13,5 +13,6 @@ struct stack_entry {
 int stack_pool_alloc(struct stack_entry *entry);
 void stack_pool_push(struct stack_entry *entry);
 void stack_pool_free_all(void);
+int stack_pool_empty(void);
 
 #endif // POOL_H
