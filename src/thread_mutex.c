@@ -3,7 +3,6 @@
 #include <errno.h>
 #include <stddef.h>
 #include <sys/queue.h>
-#include <ucontext.h>
 
 int thread_mutex_init(thread_mutex_t *mutex) {
   if (mutex == NULL)

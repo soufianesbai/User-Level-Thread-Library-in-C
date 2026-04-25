@@ -3,7 +3,6 @@
 #include "thread_internal.h"
 #include <stddef.h>
 #include <sys/queue.h>
-#include <ucontext.h>
 
 /*
  * thread_sem_init — Initialize a semaphore.
@@ -72,7 +71,7 @@ int thread_sem_wait(thread_sem_t *sem) {
 
   thread_set_current_thread(next);
   next->state = THREAD_RUNNING;
-  swapcontext(&prev->context, &next->context);
+  fast_swap_context(&prev->context, &next->context);
 
   // Quand on revient ici, post() nous a réveillés et a déjà décrémenté count.
 #ifdef ENABLE_PREEMPTION

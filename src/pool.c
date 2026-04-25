@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/queue.h>
-#include <ucontext.h>
 #include <valgrind/valgrind.h>
 
 #ifndef THREAD_DISABLE_GUARD_PAGE
@@ -15,8 +14,13 @@
 /*
  * Stack pool used to recycle thread stacks.
  * Entries are stored in a static array with a simple size counter.
+ *
+ * MAX_POOLED_STACKS must cover the high-water mark of simultaneously
+ * alive threads for the target workload (fib(29) ≈ 300k peak).
+ * A large pool avoids mmap/munmap on the hot path: stacks are reused
+ * instead of mapped/unmapped for each thread create/join cycle.
  */
-#define MAX_POOLED_STACKS 16384
+#define MAX_POOLED_STACKS (1 << 17) /* 131072 — covers fib(29+) recycle phase (~3 MB static) */
 static struct stack_entry stack_pool[MAX_POOLED_STACKS];
 static int stack_pool_size = 0;
 
@@ -67,7 +71,11 @@ int stack_pool_alloc(struct stack_entry *entry) {
  * stack_pool_push — return a stack to the pool for reuse.
  *
  * If the pool is full, free the stack immediately.
- * Otherwise, push it in O(1).
+ * Otherwise, push it in O(1) and release its physical pages via
+ * MADV_FREE so that idle stacks do not pin RAM.  MADV_FREE is advisory:
+ * if the OS has not yet reclaimed the pages when the stack is next
+ * popped, no page fault occurs — making it essentially free on
+ * unloaded systems while preventing OOM on large workloads.
  */
 void stack_pool_push(struct stack_entry *entry) {
   if (stack_pool_size >= MAX_POOLED_STACKS) {
@@ -76,6 +84,14 @@ void stack_pool_push(struct stack_entry *entry) {
     munmap(entry->map, STACK_SIZE + GUARD_SIZE);
     return;
   }
+
+  /* Release physical pages only when the pool is well-stocked.
+   * Below the threshold the working set is small and the pool entries
+   * will be reused soon — paying a MADV_FREE syscall would only add
+   * overhead.  Above the threshold idle stacks would otherwise pin RAM
+   * (relevant for large fibonacci-style workloads). */
+  if (stack_pool_size > 8192)
+    madvise(entry->map, STACK_SIZE + GUARD_SIZE, MADV_FREE);
 
   /* Normal path: store for later reuse. */
   stack_pool[stack_pool_size++] = *entry;

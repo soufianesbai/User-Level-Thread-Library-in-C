@@ -1,7 +1,7 @@
 CC = gcc
 CLANG_FORMAT ?= clang-format
 PYTHON ?= python3
-CFLAGS  = -Wall -Wextra -O2 -g -fPIC
+CFLAGS  = -Wall -Wextra -O3 -g -fPIC
 LDFLAGS = -lpthread
 RPATH_FLAGS = -Wl,-rpath,'$$ORIGIN/../lib:$$ORIGIN/..'
 
@@ -28,6 +28,7 @@ LATEXMK ?= /Library/TeX/texbin/latexmk
 
 # Source files
 SRC = $(wildcard $(SRC_DIR)/*.c)
+ASM_SRC = $(wildcard $(SRC_DIR)/*.S)
 OBJ = $(patsubst $(SRC_DIR)/%.c, %.o, $(SRC))
 LIB = libthread.so
 LIB_PREEM = libthread_preem.so
@@ -53,12 +54,12 @@ pool.h:
 	ln -sf $(INCLUDE_DIR)/pool.h $@
 
 # Build the shared library (.so)
-$(LIB): $(SRC)
+$(LIB): $(SRC) $(ASM_SRC)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -shared -o $@ $^
 
 
 # Build the preemption-enabled shared library (.so)
-$(LIB_PREEM): $(SRC)
+$(LIB_PREEM): $(SRC) $(ASM_SRC)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DENABLE_PREEMPTION -DPREEM_ENABLED -shared -o $@ $^
 
 

@@ -3,7 +3,6 @@
 #include "thread_internal.h"
 #include <stddef.h>
 #include <sys/queue.h>
-#include <ucontext.h>
 
 int thread_cond_init(thread_cond_t *cond) {
   if (cond == NULL)
@@ -72,7 +71,7 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
 
   thread_set_current_thread(next);
   next->state = THREAD_RUNNING;
-  swapcontext(&prev->context, &next->context);
+  fast_swap_context(&prev->context, &next->context);
 
   // Quand on revient ici, signal/broadcast nous a remis dans la ready_queue
   // et on a été re-sélectionné par le scheduler.
