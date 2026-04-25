@@ -1,5 +1,5 @@
-#include "thread_internal.h"
 #include "preemption.h"
+#include "thread_internal.h"
 #include <errno.h>
 #include <stddef.h>
 #include <sys/queue.h>

@@ -142,3 +142,8 @@ fast_restore_context:
 .size fast_restore_context, .-fast_restore_context
 
 #endif /* architecture */
+
+/* Tell the linker this object does not need an executable stack. */
+#if defined(__linux__)
+.section .note.GNU-stack,"",@progbits
+#endif

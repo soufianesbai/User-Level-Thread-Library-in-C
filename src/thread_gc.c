@@ -2,7 +2,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <sys/mman.h>
-#include <ucontext.h>    /* needed for cleanup_ctx (ucontext_t) */
+#include <ucontext.h> /* needed for cleanup_ctx (ucontext_t) */
 
 /*
  * Zombie queue — terminated threads not yet joined.

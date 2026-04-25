@@ -181,6 +181,11 @@ void preemption_handler(int sig) {
  * Calls the user function then exits the thread when it returns.
  */
 static void thread_entry(void) {
+#ifdef ENABLE_PREEMPTION
+  /* New threads inherit the caller's signal mask (preem_block was active
+   * during the context switch). Unblock here so preemption fires normally. */
+  preem_unblock();
+#endif
   void *retval = current_thread->start_fun(current_thread->arg);
   thread_exit(retval);
 }
@@ -284,9 +289,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
    * fast_ctx_init arranges the stack and entry point so that the first
    * fast_swap_context to this thread jumps directly to thread_entry on the
    * thread's own stack — no makecontext/getcontext syscalls needed. */
-  fast_ctx_init(&newth->context,
-                (char *)stack_entry.stack + STACK_SIZE,
-                thread_entry);
+  fast_ctx_init(&newth->context, (char *)stack_entry.stack + STACK_SIZE, thread_entry);
 
 #ifdef ENABLE_PREEMPTION
   preem_block();
@@ -508,4 +511,3 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   return 0;
 }
-
