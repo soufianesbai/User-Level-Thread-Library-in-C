@@ -23,20 +23,18 @@ void preem_mask_init(void) {
   sigaddset(&sigvtalrm_mask, SIGVTALRM);
 }
 
-int init_prem(void (*func)(int), int ms) {
-  printf("Initializing preemption with interval %d ms\n", ms);
+int init_prem(void (*func)(int), int us) {
+  printf("Initializing preemption with interval %d us\n", us);
   sa.sa_handler = func;
   sigemptyset(&sa.sa_mask);
-  sa.sa_flags = SA_RESTART; // auto-restart interrupted syscalls
+  sa.sa_flags = SA_RESTART;
   sigaction(SIGVTALRM, &sa, NULL);
 
-  // First fire: after 10ms
   timer.it_value.tv_sec = 0;
-  timer.it_value.tv_usec = 10000; // 10ms
+  timer.it_value.tv_usec = us;
 
-  // Then repeat every 10ms
   timer.it_interval.tv_sec = 0;
-  timer.it_interval.tv_usec = ms * 1000;
+  timer.it_interval.tv_usec = us;
 
   preem_mask_init();
 

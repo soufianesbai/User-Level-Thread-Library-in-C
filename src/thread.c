@@ -218,7 +218,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     }
 
 #ifdef ENABLE_PREEMPTION
-    init_prem(preemption_handler, 5);
+    init_prem(preemption_handler, 100);
 #endif
 
     /*
