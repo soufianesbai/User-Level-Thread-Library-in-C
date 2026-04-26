@@ -1,0 +1,9 @@
+experiment,test,variant,x,seconds
+03_scheduler_policy,31-switch-many,fifo,10,0.000267
+03_scheduler_policy,31-switch-many,fifo,20,0.000495
+03_scheduler_policy,31-switch-many,fifo,40,0.000968
+03_scheduler_policy,31-switch-many,fifo,80,0.001802
+03_scheduler_policy,31-switch-many,prio,10,0.000318
+03_scheduler_policy,31-switch-many,prio,20,0.000530
+03_scheduler_policy,31-switch-many,prio,40,0.001098
+03_scheduler_policy,31-switch-many,prio,80,0.002515

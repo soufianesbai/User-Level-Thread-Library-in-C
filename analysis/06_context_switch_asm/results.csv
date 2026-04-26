@@ -1,0 +1,5 @@
+test,args,before_median_s,after_median_s,speedup_x
+31-switch-many,200 200,0.043241,0.006797,6.362
+32-switch-many-join,200 200,0.003625,0.007354,0.493
+33-switch-many-cascade,120 150,0.948356,0.075631,12.539
+sum,,0.347258,0.319799,1.086

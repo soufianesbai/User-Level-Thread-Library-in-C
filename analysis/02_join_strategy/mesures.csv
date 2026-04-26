@@ -1,0 +1,17 @@
+experiment,test,variant,x,seconds
+02_join_strategy,32-switch-many-join,join_passif,10,0.000000
+02_join_strategy,32-switch-many-join,join_passif,20,0.000000
+02_join_strategy,32-switch-many-join,join_passif,40,0.000000
+02_join_strategy,32-switch-many-join,join_passif,80,0.000001
+02_join_strategy,32-switch-many-join,join_polling,10,0.000174
+02_join_strategy,32-switch-many-join,join_polling,20,0.000332
+02_join_strategy,32-switch-many-join,join_polling,40,0.000696
+02_join_strategy,32-switch-many-join,join_polling,80,0.001364
+02_join_strategy,33-switch-many-cascade,join_passif,10,0.001181
+02_join_strategy,33-switch-many-cascade,join_passif,20,0.004099
+02_join_strategy,33-switch-many-cascade,join_passif,40,0.014272
+02_join_strategy,33-switch-many-cascade,join_passif,80,0.061017
+02_join_strategy,33-switch-many-cascade,join_polling,10,0.002527
+02_join_strategy,33-switch-many-cascade,join_polling,20,0.007605
+02_join_strategy,33-switch-many-cascade,join_polling,40,0.026815
+02_join_strategy,33-switch-many-cascade,join_polling,80,0.106272

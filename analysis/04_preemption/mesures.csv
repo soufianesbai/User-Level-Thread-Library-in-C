@@ -1,0 +1,9 @@
+experiment,test,variant,x,seconds
+04_preemption,31-switch-many,sans_preemption,10,0.000266
+04_preemption,31-switch-many,sans_preemption,20,0.000493
+04_preemption,31-switch-many,sans_preemption,40,0.001302
+04_preemption,31-switch-many,sans_preemption,80,0.002460
+04_preemption,31-switch-many,avec_preemption,10,0.000714
+04_preemption,31-switch-many,avec_preemption,20,0.001204
+04_preemption,31-switch-many,avec_preemption,40,0.002349
+04_preemption,31-switch-many,avec_preemption,80,0.004573
