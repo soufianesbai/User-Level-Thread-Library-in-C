@@ -1,5 +1,6 @@
 #include "thread_cond.h"
 #include "preemption.h"
+#include "thread_sync_internal.h"
 #include "thread_internal.h"
 #include <stddef.h>
 #include <sys/queue.h>
@@ -37,9 +38,10 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
   preem_block();
 #endif
 
-  struct thread_queue *ready_queue = thread_get_ready_queue();
-  thread *prev = thread_get_current_thread();
-  thread *next = thread_scheduler_pick_next();
+  thread *prev = thread_get_current();
+
+  SCHED_LOCK();
+  thread *next = thread_scheduler_pick_next_locked();
 
   // Relâche le mutex avant de se bloquer
   // On appelle la logique interne directement pour rester sous preem_block.
@@ -48,13 +50,14 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
     thread *revived = TAILQ_FIRST(&mutex->waiting_queue);
     TAILQ_REMOVE(&mutex->waiting_queue, revived, entries);
     revived->state = THREAD_READY;
-    thread_scheduler_enqueue(revived);
+    thread_scheduler_enqueue_locked(revived);
     // locked reste à 1 : le thread réveillé prend le mutex
   } else {
     mutex->locked = 0;
   }
 
   if (next == NULL) {
+    SCHED_UNLOCK();
     // Aucun thread prêt — on ne peut pas se bloquer sans deadlock
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
@@ -65,11 +68,12 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
   }
 
   // Retire next de la ready_queue et se bloque dans la cond
-  TAILQ_REMOVE(ready_queue, next, entries);
   prev->state = THREAD_BLOCKED;
   TAILQ_INSERT_TAIL(&cond->waiting_queue, prev, entries);
 
-  thread_set_current_thread(next);
+  SCHED_UNLOCK();
+
+  thread_set_current(next);
   next->state = THREAD_RUNNING;
   fast_swap_context(&prev->context, &next->context);
 
@@ -98,12 +102,14 @@ int thread_cond_signal(thread_cond_t *cond) {
   preem_block();
 #endif
 
+  SCHED_LOCK();
   if (!TAILQ_EMPTY(&cond->waiting_queue)) {
     thread *revived = TAILQ_FIRST(&cond->waiting_queue);
     TAILQ_REMOVE(&cond->waiting_queue, revived, entries);
     revived->state = THREAD_READY;
-    thread_scheduler_enqueue(revived);
+    thread_scheduler_enqueue_locked(revived);
   }
+  SCHED_UNLOCK();
 
 #ifdef ENABLE_PREEMPTION
   preem_unblock();
@@ -123,15 +129,14 @@ int thread_cond_broadcast(thread_cond_t *cond) {
   preem_block();
 #endif
 
-  struct thread_queue *ready_queue = thread_get_ready_queue();
-  (void)ready_queue; // Unused when no threads are waiting
-
+  SCHED_LOCK();
   while (!TAILQ_EMPTY(&cond->waiting_queue)) {
     thread *revived = TAILQ_FIRST(&cond->waiting_queue);
     TAILQ_REMOVE(&cond->waiting_queue, revived, entries);
     revived->state = THREAD_READY;
-    thread_scheduler_enqueue(revived);
+    thread_scheduler_enqueue_locked(revived);
   }
+  SCHED_UNLOCK();
 
 #ifdef ENABLE_PREEMPTION
   preem_unblock();

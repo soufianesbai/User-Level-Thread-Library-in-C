@@ -1,6 +1,7 @@
 #include "preemption.h"
 #include "thread.h"
 #include "thread_internal.h"
+#include "thread_sync_internal.h"
 #include <errno.h>
 #include <stddef.h>
 
@@ -34,6 +35,8 @@ int thread_signal_send(thread_t target_handle, int sig) {
   preem_block();
 #endif
 
+  SCHED_LOCK();
+
   target->pending_signals |= bit;
 
   if (target->state == THREAD_BLOCKED && target->waiting_for_signal &&
@@ -41,8 +44,11 @@ int thread_signal_send(thread_t target_handle, int sig) {
     target->waiting_for_signal = 0;
     target->waited_signals = 0;
     target->state = THREAD_READY;
-    thread_scheduler_enqueue(target);
+    thread_scheduler_enqueue_locked(target);
   }
+
+  SCHED_BROADCAST();
+  SCHED_UNLOCK();
 
 #ifdef ENABLE_PREEMPTION
   preem_unblock();
@@ -62,13 +68,16 @@ int thread_sigwait(thread_sigset_t set, int *sig) {
 #endif
 
   while (1) {
-    thread *current = thread_get_current_thread();
+    thread *current = thread_get_current();
+
+    SCHED_LOCK();
     unsigned int available = current->pending_signals & (unsigned int)set;
     available &= ~current->blocked_signals;
 
     if (available != 0) {
       int chosen = thread_signal_pick_one(available);
       if (chosen < 0) {
+        SCHED_UNLOCK();
 #ifdef ENABLE_PREEMPTION
         preem_unblock();
 #endif
@@ -77,6 +86,7 @@ int thread_sigwait(thread_sigset_t set, int *sig) {
       }
       current->pending_signals &= ~thread_signal_bit(chosen);
       *sig = chosen;
+      SCHED_UNLOCK();
 #ifdef ENABLE_PREEMPTION
       preem_unblock();
 #endif
@@ -88,12 +98,13 @@ int thread_sigwait(thread_sigset_t set, int *sig) {
     current->state = THREAD_BLOCKED;
 
     thread *prev = current;
-    thread *next = thread_scheduler_pick_next();
+    thread *next = thread_scheduler_pick_next_locked();
 
     if (next == NULL) {
       current->waiting_for_signal = 0;
       current->waited_signals = 0;
       current->state = THREAD_RUNNING;
+      SCHED_UNLOCK();
 #ifdef ENABLE_PREEMPTION
       preem_unblock();
 #endif
@@ -101,8 +112,10 @@ int thread_sigwait(thread_sigset_t set, int *sig) {
       return -1;
     }
 
+    SCHED_UNLOCK();
+
     swap_thread(prev, next);
-    thread_get_current_thread()->state = THREAD_RUNNING;
+    thread_get_current()->state = THREAD_RUNNING;
   }
 }
 

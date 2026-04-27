@@ -74,6 +74,8 @@ int thread_mutex_lock(thread_mutex_t *mutex);
 int thread_mutex_unlock(thread_mutex_t *mutex);
 
 int thread_set_priority(thread_t t, int prio);
+int thread_set_concurrency(int nworkers);
+int thread_set_affinity(thread_t thread, int worker_id);
 
 #ifdef ENABLE_SIGNAL
 typedef uint32_t thread_sigset_t;
@@ -94,6 +96,17 @@ int thread_sigwait(thread_sigset_t set, int *sig);
 #define thread_join pthread_join
 #define thread_exit pthread_exit
 #define thread_set_priority(t, prio) ((void)(t), (void)(prio), (void)0)
+
+static inline int thread_set_concurrency(int nworkers) {
+  (void)nworkers;
+  return 0;
+}
+
+static inline int thread_set_affinity(thread_t thread, int worker_id) {
+  (void)thread;
+  (void)worker_id;
+  return 0;
+}
 
 /* Interface possible pour les mutex */
 #define thread_mutex_t pthread_mutex_t

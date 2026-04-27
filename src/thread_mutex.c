@@ -1,4 +1,5 @@
 #include "preemption.h"
+#include "thread_sync_internal.h"
 #include "thread_internal.h"
 #include <errno.h>
 #include <stddef.h>
@@ -38,7 +39,10 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
   preem_block();
 #endif
 
+  SCHED_LOCK();
+
   if (mutex->locked == -1) {
+    SCHED_UNLOCK();
     errno = EINVAL;
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
@@ -49,6 +53,7 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
   if (!mutex->locked) {
     // Fast path: mutex is free, acquire it immediately
     mutex->locked = 1;
+    SCHED_UNLOCK();
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
@@ -57,9 +62,10 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
 
   // Slow path: park current thread in waiting queue until unlock() wakes us.
   // We will return here with the mutex already owned (locked stays 1).
-  thread *prev = thread_get_current_thread();
-  thread *next = thread_scheduler_pick_next();
+  thread *prev = thread_get_current();
+  thread *next = thread_scheduler_pick_next_locked();
   if (next == NULL) {
+    SCHED_UNLOCK();
     // No other thread is ready to run — cannot proceed without risking livelock
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
@@ -70,6 +76,8 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
   // Park current thread: BLOCKED state means thread_yield() won't pick it up
   prev->state = THREAD_BLOCKED;
   TAILQ_INSERT_TAIL(&mutex->waiting_queue, prev, entries);
+
+  SCHED_UNLOCK();
 
   swap_thread(prev, next);
 #ifdef ENABLE_PREEMPTION
@@ -96,7 +104,10 @@ int thread_mutex_unlock(thread_mutex_t *mutex) {
   preem_block();
 #endif
 
+  SCHED_LOCK();
+
   if (mutex->locked == -1) {
+    SCHED_UNLOCK();
     errno = EINVAL;
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
@@ -106,6 +117,7 @@ int thread_mutex_unlock(thread_mutex_t *mutex) {
 
   if (!mutex->locked) {
     // Cannot unlock a mutex that is not locked
+    SCHED_UNLOCK();
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
@@ -118,11 +130,13 @@ int thread_mutex_unlock(thread_mutex_t *mutex) {
     thread *revived = TAILQ_FIRST(&mutex->waiting_queue);
     TAILQ_REMOVE(&mutex->waiting_queue, revived, entries);
     revived->state = THREAD_READY;
-    thread_scheduler_enqueue(revived);
+    thread_scheduler_enqueue_locked(revived);
     // locked intentionally stays at 1
   } else {
     mutex->locked = 0;
   }
+
+  SCHED_UNLOCK();
 
 #ifdef ENABLE_PREEMPTION
   preem_unblock();

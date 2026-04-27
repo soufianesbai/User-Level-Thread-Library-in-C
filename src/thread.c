@@ -1,6 +1,7 @@
 #include "thread.h"
 #include "preemption.h"
 #include "thread_internal.h"
+#include "thread_sync_internal.h"
 #include <assert.h>
 #include <errno.h>
 #include <signal.h>
@@ -15,9 +16,15 @@ static thread main_thread = {.id = 0,
                              .state = THREAD_RUNNING,
                              .joined_by = NULL,
                              .priority = THREAD_DEFAULT_PRIORITY,
+                             .affinity = -1,
                              .waiting_for = NULL,
                              .head_joiner = NULL};
-static thread *current_thread = &main_thread;
+/*
+ * current thread pointer is thread-local in multicore mode so each worker has
+ * its own currently-running user thread. In monocore mode this is still a
+ * single global pointer (THREAD_LOCAL expands to empty).
+ */
+static THREAD_LOCAL thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
 
@@ -46,10 +53,14 @@ static int deferred_stack_count = 0;
 #define STACK_PREFILL_COUNT 4096
 
 static void reclaim_deferred_stacks_batch(int budget) {
+  SCHED_LOCK();
   while (deferred_stack_count > 0 && budget-- > 0) {
     struct stack_entry e = deferred_stacks[--deferred_stack_count];
+    SCHED_UNLOCK();
     stack_pool_push(&e);
+    SCHED_LOCK();
   }
+  SCHED_UNLOCK();
 }
 
 void reclaim_deferred_stacks_all(void) {
@@ -61,6 +72,10 @@ static void defer_stack_reclaim(thread *t) {
     return;
   }
 
+  /*
+   * Called from thread_exit() while scheduler_lock is already held.
+   * Keep this helper lock-free to avoid self-deadlock in multicore mode.
+   */
   if (deferred_stack_count < MAX_DEFERRED_STACKS) {
     deferred_stacks[deferred_stack_count++] = (struct stack_entry){
         .map = t->stack_map,
@@ -78,6 +93,7 @@ static void defer_stack_reclaim(thread *t) {
  * thread_pool_free_all — free cached thread objects at process exit.
  */
 static void thread_pool_free_all(void) {
+  thread_scheduler_sync_shutdown();
   reclaim_deferred_stacks_all();
 
   for (int i = 0; i < thread_pool_size; ++i) {
@@ -105,8 +121,13 @@ static void thread_pool_free_all(void) {
  * thread_alloc — pop a thread struct from the pool or malloc a fresh one.
  */
 static thread *thread_alloc(void) {
-  if (thread_pool_size > 0)
-    return thread_pool[--thread_pool_size];
+  SCHED_LOCK();
+  if (thread_pool_size > 0) {
+    thread *reused = thread_pool[--thread_pool_size];
+    SCHED_UNLOCK();
+    return reused;
+  }
+  SCHED_UNLOCK();
   return malloc(sizeof(thread));
 }
 
@@ -114,16 +135,22 @@ static thread *thread_alloc(void) {
  * thread_free — return a thread struct to the pool, or free it if full.
  */
 static void thread_free(thread *t) {
-  if (thread_pool_size < MAX_POOLED_THREADS)
+  SCHED_LOCK();
+  if (thread_pool_size < MAX_POOLED_THREADS) {
     thread_pool[thread_pool_size++] = t;
-  else
+    SCHED_UNLOCK();
+  } else {
+    SCHED_UNLOCK();
     free(t);
+  }
 }
 
 static thread **thread_head_ref_alloc(thread *owner) {
+  SCHED_LOCK();
   if (head_ref_active_chunk == NULL || head_ref_active_index >= HEAD_REF_CHUNK_SIZE) {
     thread **new_chunk = malloc(sizeof(*new_chunk) * HEAD_REF_CHUNK_SIZE);
     if (new_chunk == NULL) {
+      SCHED_UNLOCK();
       return NULL;
     }
 
@@ -132,6 +159,7 @@ static thread **thread_head_ref_alloc(thread *owner) {
       thread ***new_chunks = realloc(head_ref_chunks, sizeof(*new_chunks) * new_cap);
       if (new_chunks == NULL) {
         free(new_chunk);
+        SCHED_UNLOCK();
         return NULL;
       }
       head_ref_chunks = new_chunks;
@@ -145,6 +173,7 @@ static thread **thread_head_ref_alloc(thread *owner) {
 
   thread **ref = &head_ref_active_chunk[head_ref_active_index++];
   *ref = owner;
+  SCHED_UNLOCK();
   return ref;
 }
 
@@ -159,12 +188,20 @@ static void thread_obj_release(thread *t) {
   thread_free(t);
 }
 
-thread *thread_get_current_thread(void) {
+thread *thread_get_current(void) {
   return current_thread;
 }
 
-void thread_set_current_thread(thread *t) {
+void thread_set_current(thread *t) {
   current_thread = t;
+}
+
+thread *thread_get_current_thread(void) {
+  return thread_get_current();
+}
+
+void thread_set_current_thread(thread *t) {
+  thread_set_current(t);
 }
 
 /*
@@ -186,7 +223,8 @@ static void thread_entry(void) {
    * during the context switch). Unblock here so preemption fires normally. */
   preem_unblock();
 #endif
-  void *retval = current_thread->start_fun(current_thread->arg);
+  thread *self = thread_get_current();
+  void *retval = self->start_fun(self->arg);
   thread_exit(retval);
 }
 
@@ -194,7 +232,7 @@ static void thread_entry(void) {
  * thread_self — retrieves the identifier of the current thread.
  */
 thread_t thread_self(void) {
-  return (thread_t)current_thread;
+  return (thread_t)thread_get_current();
 }
 
 /*
@@ -208,6 +246,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   }
 
   if (!scheduler_initialized) {
+    thread_scheduler_sync_init();
     thread_cleanup_register();
     atexit(thread_pool_free_all);
 
@@ -251,8 +290,13 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     reclaim_deferred_stacks_all();
   int alloc_retries = 0;
   while (stack_pool_alloc(&stack_entry) == -1) {
+    int ready_empty = 0;
     reclaim_deferred_stacks_all();
-    if (TAILQ_EMPTY(thread_get_ready_queue()) || alloc_retries++ >= 4096) {
+    SCHED_LOCK();
+    ready_empty = TAILQ_EMPTY(thread_get_ready_queue());
+    SCHED_UNLOCK();
+
+    if (ready_empty || alloc_retries++ >= 4096) {
       thread_obj_release(newth);
       errno = ENOMEM;
       return -1;
@@ -268,6 +312,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->stack_base = stack_entry.stack;
   newth->valgrind_stack_id = stack_entry.valgrind_id;
   newth->priority = THREAD_DEFAULT_PRIORITY;
+  newth->affinity = -1;
   newth->in_ready_queue = 0;
   newth->joined_by = NULL;
   newth->waiting_for = NULL;
@@ -295,7 +340,9 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   preem_block();
 #endif
   // Keep the critical section small: only shared scheduler state
+  SCHED_LOCK();
   newth->id = next_thread_id++;
+  SCHED_UNLOCK();
   thread_scheduler_enqueue(newth);
   *newthread = (thread_t)newth;
 
@@ -327,10 +374,11 @@ void thread_exit(void *retval) {
   preem_block();
 #endif
 
-  current_thread->retval = retval;
-  current_thread->state = THREAD_TERMINATED;
+  thread *dying = thread_get_current();
 
-  thread *dying = current_thread;
+  SCHED_LOCK();
+  dying->retval = retval;
+  dying->state = THREAD_TERMINATED;
   // Non-main threads go to the zombie queue so thread_join() can
   // still read their retval. The main thread's struct is static —
   // it never needs to be freed, so we skip zombification.
@@ -346,20 +394,35 @@ void thread_exit(void *retval) {
   if (dying->joined_by != NULL) {
     thread *joiner = dying->joined_by;
     joiner->state = THREAD_READY;
-    thread_scheduler_enqueue(joiner);
+    thread_scheduler_enqueue_locked(joiner);
   }
 
   // Pick the next thread normally via FIFO — no special case needed.
   // The joiner (if any) is already in the queue at this point.
-  thread *next = thread_scheduler_pick_next();
+  thread *next = thread_scheduler_pick_next_locked();
+  SCHED_BROADCAST();
+  SCHED_UNLOCK();
 
   if (next == NULL) {
+#ifdef THREAD_MULTICORE
+    thread *worker_stub = thread_scheduler_get_worker_stub();
+    if (worker_stub != NULL) {
+      /*
+       * Return to the worker loop context saved in the worker stub. The
+       * worker loop handles waiting for new READY threads and clean shutdown
+       * when scheduler_running=0.
+       */
+      thread_set_current(worker_stub);
+      worker_stub->state = THREAD_RUNNING;
+      fast_swap_context(&dying->context, &worker_stub->context);
+    }
+#endif
     thread_switch_to_cleanup();
   }
 
-  current_thread = next;
-  current_thread->state = THREAD_RUNNING;
-  fast_restore_context(&current_thread->context);
+  thread_set_current(next);
+  next->state = THREAD_RUNNING;
+  fast_restore_context(&next->context);
 
   __builtin_unreachable();
 }
@@ -389,7 +452,9 @@ int thread_join(thread_t thread_handle, void **retval) {
     return -1;
   }
 
-  if (target == current_thread) {
+  thread *self = thread_get_current();
+
+  if (target == self) {
     errno = EDEADLK;
     return EDEADLK;
   }
@@ -405,7 +470,9 @@ int thread_join(thread_t thread_handle, void **retval) {
     }
 
     if (target != &main_thread) {
+      SCHED_LOCK();
       thread_zombie_remove(target);
+      SCHED_UNLOCK();
       if (target->stack_map != NULL) {
         struct stack_entry entry = {.map = target->stack_map,
                                     .stack = target->stack_base,
@@ -421,7 +488,54 @@ int thread_join(thread_t thread_handle, void **retval) {
     return 0;
   }
 
-  if (target->head_joiner == NULL || current_thread->head_joiner == NULL) {
+#ifdef THREAD_MULTICORE
+  /*
+   * When worker threads are active, the main thread must not perform direct
+   * user-thread context switches concurrently with workers. It waits on the
+   * scheduler condition and lets workers drive execution.
+   */
+  if (thread_scheduler_has_workers() && thread_scheduler_get_worker_stub() == NULL) {
+    while (target->state != THREAD_TERMINATED) {
+      SCHED_LOCK();
+      if (target->state == THREAD_TERMINATED) {
+        SCHED_UNLOCK();
+        break;
+      }
+      SCHED_WAIT();
+      SCHED_UNLOCK();
+    }
+
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
+
+    if (retval != NULL) {
+      *retval = target->retval;
+    }
+
+#ifdef ENABLE_PREEMPTION
+    preem_block();
+#endif
+    if (target != &main_thread) {
+      SCHED_LOCK();
+      thread_zombie_remove(target);
+      SCHED_UNLOCK();
+      if (target->stack_map != NULL) {
+        struct stack_entry entry = {.map = target->stack_map,
+                                    .stack = target->stack_base,
+                                    .valgrind_id = target->valgrind_stack_id};
+        stack_pool_push(&entry);
+      }
+      thread_obj_release(target);
+    }
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
+    return 0;
+  }
+#endif
+
+  if (target->head_joiner == NULL || self->head_joiner == NULL) {
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
@@ -431,7 +545,7 @@ int thread_join(thread_t thread_handle, void **retval) {
 
   thread *target_head = *target->head_joiner;
   int target_is_head = (target_head == target);
-  int same_chain = (current_thread->head_joiner == target->head_joiner);
+  int same_chain = (self->head_joiner == target->head_joiner);
 
   // Joining the head from inside the same chain would create a cycle.
   if (target_is_head && same_chain) {
@@ -443,42 +557,69 @@ int thread_join(thread_t thread_handle, void **retval) {
   }
 
   // Mark the current thread as the joiner of the target
-  target->joined_by = current_thread;
+  target->joined_by = self;
 
   // If an external thread joins the current head, it becomes the new head in O(1).
   if (target_is_head && !same_chain) {
-    current_thread->head_joiner = target->head_joiner;
-    *target->head_joiner = current_thread;
+    self->head_joiner = target->head_joiner;
+    *target->head_joiner = self;
   } else {
     // current thread joins target's chain
-    current_thread->head_joiner = target->head_joiner;
+    self->head_joiner = target->head_joiner;
   }
 
   if (target->state != THREAD_TERMINATED) {
-    current_thread->state = THREAD_BLOCKED;
-    current_thread->waiting_for = target;
+    self->state = THREAD_BLOCKED;
+    self->waiting_for = target;
 
-    thread *prev = current_thread;
+    thread *prev = self;
     thread *next = thread_scheduler_pick_next();
 
     if (next == NULL) {
-      current_thread->state = THREAD_RUNNING;
-      current_thread->waiting_for = NULL;
+#ifdef THREAD_MULTICORE
+      if (thread_scheduler_has_workers()) {
+        while (target->state != THREAD_TERMINATED) {
+          SCHED_LOCK();
+          if (target->state == THREAD_TERMINATED) {
+            SCHED_UNLOCK();
+            break;
+          }
+          SCHED_WAIT();
+          SCHED_UNLOCK();
+        }
+
+        self->state = THREAD_RUNNING;
+        self->waiting_for = NULL;
+      } else {
+        self->state = THREAD_RUNNING;
+        self->waiting_for = NULL;
+#ifdef ENABLE_PREEMPTION
+        preem_unblock();
+#endif
+        errno = EDEADLK;
+        return EDEADLK;
+      }
+#else
+      self->state = THREAD_RUNNING;
+      self->waiting_for = NULL;
 #ifdef ENABLE_PREEMPTION
       preem_unblock();
 #endif
       errno = EDEADLK;
       return EDEADLK;
+#endif
     }
 
-    // Yield exactly once. We will return here only when thread_exit()
-    // of target puts us back into the ready queue.
-    swap_thread(prev, next);
+    if (next != NULL) {
+      // Yield exactly once. We will return here only when thread_exit()
+      // of target puts us back into the ready queue.
+      swap_thread(prev, next);
+    }
 
     // At this point, target->state == THREAD_TERMINATED is guaranteed
     // by the wakeup invariant in thread_exit().
-    current_thread->waiting_for = NULL;
-    current_thread->state = THREAD_RUNNING;
+    self->waiting_for = NULL;
+    self->state = THREAD_RUNNING;
   }
 
 #ifdef ENABLE_PREEMPTION
@@ -495,7 +636,9 @@ int thread_join(thread_t thread_handle, void **retval) {
 #endif
 
   if (target != &main_thread) {
+    SCHED_LOCK();
     thread_zombie_remove(target);
+    SCHED_UNLOCK();
     if (target->stack_map != NULL) {
       struct stack_entry entry = {.map = target->stack_map,
                                   .stack = target->stack_base,

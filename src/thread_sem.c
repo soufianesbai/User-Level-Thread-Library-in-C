@@ -1,5 +1,6 @@
 #include "thread_sem.h"
 #include "preemption.h"
+#include "thread_sync_internal.h"
 #include "thread_internal.h"
 #include <stddef.h>
 #include <sys/queue.h>
@@ -44,7 +45,9 @@ int thread_sem_wait(thread_sem_t *sem) {
 
   if (sem->count > 0) {
     // Fast path : la ressource est disponible
+    SCHED_LOCK();
     sem->count--;
+    SCHED_UNLOCK();
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
@@ -52,11 +55,13 @@ int thread_sem_wait(thread_sem_t *sem) {
   }
 
   // Slow path : on se bloque jusqu'à ce qu'un post() nous réveille
-  struct thread_queue *ready_queue = thread_get_ready_queue();
-  thread *prev = thread_get_current_thread();
-  thread *next = thread_scheduler_pick_next();
+  thread *prev = thread_get_current();
+
+  SCHED_LOCK();
+  thread *next = thread_scheduler_pick_next_locked();
 
   if (next == NULL) {
+    SCHED_UNLOCK();
     // Aucun thread ne peut faire un post() — deadlock
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
@@ -64,12 +69,12 @@ int thread_sem_wait(thread_sem_t *sem) {
     return -1;
   }
 
-  TAILQ_REMOVE(ready_queue, next, entries);
-
   prev->state = THREAD_BLOCKED;
   TAILQ_INSERT_TAIL(&sem->waiting_queue, prev, entries);
 
-  thread_set_current_thread(next);
+  SCHED_UNLOCK();
+
+  thread_set_current(next);
   next->state = THREAD_RUNNING;
   fast_swap_context(&prev->context, &next->context);
 
@@ -95,16 +100,18 @@ int thread_sem_post(thread_sem_t *sem) {
   preem_block();
 #endif
 
+  SCHED_LOCK();
   if (!TAILQ_EMPTY(&sem->waiting_queue)) {
     // Transfert direct : le thread réveillé obtient la ressource,
     // count ne change pas (même logique que mutex_unlock).
     thread *revived = TAILQ_FIRST(&sem->waiting_queue);
     TAILQ_REMOVE(&sem->waiting_queue, revived, entries);
     revived->state = THREAD_READY;
-    thread_scheduler_enqueue(revived);
+    thread_scheduler_enqueue_locked(revived);
   } else {
     sem->count++;
   }
+  SCHED_UNLOCK();
 
 #ifdef ENABLE_PREEMPTION
   preem_unblock();
