@@ -113,7 +113,7 @@ clean:
 		report/*.pdf report/*.synctex.gz report/*.toc report/*.bbl report/*.blg
 
 graphs: all pthreads
-	$(PYTHON) scripts/benchmark_plot.py --custom-tests $(ARGS)
+	$(PYTHON) graph_exec_time_comparison/benchmark_plot.py --custom-tests $(ARGS)
 
 format:
 	$(CLANG_FORMAT) -i $(FORMAT_SRCS)
