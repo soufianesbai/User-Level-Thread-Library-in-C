@@ -39,19 +39,10 @@ thread *thread_scheduler_pick_next(void) {
   return next;
 }
 
-int swap_thread(thread *prev, thread *next) {
-  thread_set_current_thread(next);
-  next->state = THREAD_RUNNING;
-  fast_swap_context(&prev->context, &next->context);
-  return 0;
-}
-
 int thread_yield(void) {
 #ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
-
-  reclaim_deferred_stacks_all();
 
   thread *prev = thread_get_current_thread();
 

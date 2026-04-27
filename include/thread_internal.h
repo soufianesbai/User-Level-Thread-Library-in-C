@@ -24,8 +24,8 @@ typedef struct thread {
   struct thread *joined_by;    // The thread that is joining on this thread (if any)
   struct thread *waiting_for;  // The thread that is waiting for this thread to terminate (if any)
   int priority;                // Thread priority for scheduling
-  int in_ready_queue; // Set to 1 when enqueued in ready queue to prevent duplicate insertions,
-                      // reset to 0 when dequeued.
+  int in_ready_queue;          // 1 when in ready queue, 0 otherwise
+  int in_zombie_queue;         // 1 when in zombie queue, 0 otherwise
   struct thread **head_joiner; // Shared reference to the head of the joining chain
 #ifdef ENABLE_SIGNAL
   unsigned int pending_signals; // Bitmask of pending internal signals
@@ -35,15 +35,30 @@ typedef struct thread {
 #endif
 } thread;
 
+/* current_thread is defined in thread.c and inlined here for zero-cost access. */
+extern thread *current_thread;
+
+static inline thread *thread_get_current_thread(void) {
+  return current_thread;
+}
+
+static inline void thread_set_current_thread(thread *t) {
+  current_thread = t;
+}
+
+static inline int swap_thread(thread *prev, thread *next) {
+  thread_set_current_thread(next);
+  next->state = THREAD_RUNNING;
+  fast_swap_context(&prev->context, &next->context);
+  return 0;
+}
+
 void thread_cleanup_register(void);
 void reclaim_deferred_stacks_all(void);
 void thread_switch_to_cleanup(void);
 void thread_zombie_add(thread *t);
 void thread_zombie_remove(thread *t);
 struct thread_queue *thread_get_ready_queue(void);
-thread *thread_get_current_thread(void);
-void thread_set_current_thread(thread *t);
-int swap_thread(thread *prev, thread *next);
 thread *thread_scheduler_pick_next(void);
 void thread_scheduler_enqueue(thread *t);
 int thread_set_priority(thread_t t, int prio);

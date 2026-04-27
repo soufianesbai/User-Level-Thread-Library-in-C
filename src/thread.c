@@ -17,7 +17,7 @@ static thread main_thread = {.id = 0,
                              .priority = THREAD_DEFAULT_PRIORITY,
                              .waiting_for = NULL,
                              .head_joiner = NULL};
-static thread *current_thread = &main_thread;
+thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
 
@@ -43,7 +43,7 @@ static int head_ref_active_index = 0;
 static struct stack_entry deferred_stacks[MAX_DEFERRED_STACKS];
 static int deferred_stack_count = 0;
 
-#define STACK_PREFILL_COUNT 4096
+#define STACK_PREFILL_COUNT 0
 
 static void reclaim_deferred_stacks_batch(int budget) {
   while (deferred_stack_count > 0 && budget-- > 0) {
@@ -159,14 +159,6 @@ static void thread_obj_release(thread *t) {
   thread_free(t);
 }
 
-thread *thread_get_current_thread(void) {
-  return current_thread;
-}
-
-void thread_set_current_thread(thread *t) {
-  current_thread = t;
-}
-
 /*
   a wrapper for the preemption signal handler that just yields the current thread.
   sigaction take an func(int) not a func(void)
@@ -269,6 +261,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->valgrind_stack_id = stack_entry.valgrind_id;
   newth->priority = THREAD_DEFAULT_PRIORITY;
   newth->in_ready_queue = 0;
+  newth->in_zombie_queue = 0;
   newth->joined_by = NULL;
   newth->waiting_for = NULL;
 #ifdef ENABLE_SIGNAL
@@ -338,7 +331,13 @@ void thread_exit(void *retval) {
     // A terminating thread cannot safely recycle its own running stack.
     // Defer stack reuse until another thread is running.
     defer_stack_reclaim(dying);
-    thread_zombie_add(dying);
+    // If a joiner is properly blocked waiting for us, it will claim the
+    // struct directly when it wakes up — no zombie queue needed.
+    // Check state == BLOCKED to guard against the EDEADLK path where
+    // joined_by is set but the joiner already returned without blocking.
+    if (dying->joined_by == NULL || dying->joined_by->state != THREAD_BLOCKED) {
+      thread_zombie_add(dying);
+    }
   }
 
   // If a thread was waiting on this one, unblock it now
