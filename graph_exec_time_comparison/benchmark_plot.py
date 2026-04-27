@@ -114,6 +114,28 @@ def parse_thread_counts(value: Optional[str]) -> List[int]:
     return sorted(set(thread_counts))
 
 
+def parse_fibonacci_values(start: int, stop: int, step: int) -> list[int]:
+    if start < 1:
+        raise ValueError("--fibonacci-start doit etre >= 1")
+    if stop < start:
+        raise ValueError("--fibonacci-max doit etre >= --fibonacci-start")
+    if step < 1:
+        raise ValueError("--fibonacci-step doit etre >= 1")
+    return list(range(start, stop + 1, step))
+
+
+def resolve_png_output_path(repo: Path, png_arg: str) -> Path:
+    output = Path(png_arg)
+    if output.is_absolute():
+        return output
+
+    # Tout chemin relatif est normalise vers graph_exec_time_comparison/bench.
+    parts = output.parts
+    if parts and parts[0] == "bench":
+        output = Path(*parts[1:]) if len(parts) > 1 else Path("results.png")
+    return (repo / "graph_exec_time_comparison" / "bench" / output).resolve()
+
+
 def make_axes(test_count: int):
     if test_count == 1:
         fig, axes = plt.subplots(1, 1, figsize=(8, 5), sharex=True)
@@ -129,6 +151,23 @@ def make_axes(test_count: int):
     return fig, flat_axes
 
 
+def run_binary(
+    exe: Path,
+    args: list[str],
+    repo: Path,
+    env: dict[str, str],
+    timeout_s: int,
+    core_count: Optional[int] = None,
+) -> tuple[bool, float, str]:
+    return timed_run(
+        [str(exe)] + args,
+        cwd=repo,
+        env=env,
+        timeout_s=timeout_s,
+        core_count=core_count,
+    )
+
+
 def supports_thread_scaling(test: TestCase) -> bool:
     return (test.name.startswith("2") or test.name.startswith("3")) and len(test.args) >= 1
 
@@ -137,6 +176,43 @@ def with_thread_count_args(test: TestCase, thread_count: int) -> list[str]:
     args = list(test.args)
     args[0] = str(thread_count)
     return args
+
+
+def plot_comparison(
+    path: Path,
+    selected_tests: list[TestCase],
+    x_values: list[int],
+    custom_times: dict[str, dict[int, list[float]]],
+    pthread_times: dict[str, dict[int, list[float]]],
+    x_label: str,
+    title: str,
+) -> None:
+    if not selected_tests:
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = make_axes(len(selected_tests))
+
+    for axis in axes[len(selected_tests):]:
+        axis.axis("off")
+
+    for axis, test in zip(axes, selected_tests):
+        y_custom = [median_or_nan(custom_times[test.name][x]) for x in x_values]
+        y_pthread = [median_or_nan(pthread_times[test.name][x]) for x in x_values]
+
+        axis.plot(x_values, y_custom, marker="o", linewidth=2, label="thread.c")
+        axis.plot(x_values, y_pthread, marker="o", linewidth=2, label="pthread")
+        axis.set_title(test.name)
+        axis.set_xlabel(x_label)
+        axis.set_ylabel("Temps median (s)")
+        axis.grid(True, axis="y", alpha=0.3)
+        axis.set_xticks(x_values)
+        axis.legend()
+
+    fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
 
 
 def get_affinity_prefix(core_count: int) -> Tuple[List[str], Optional[Callable[[], None]]]:
@@ -218,11 +294,11 @@ def run_sweep(
                     ("pthread", bin_dir / f"{test.name}-pthread"),
                 ]:
                     done += 1
-                    cmd = [str(exe)] + test_args
                     print(f"[{done}/{total}] {progress_for_value(test, impl, value)}", flush=True)
-                    ok, dt, detail = timed_run(
-                        cmd,
-                        cwd=repo,
+                    ok, dt, detail = run_binary(
+                        exe,
+                        test_args,
+                        repo=repo,
                         env=env,
                         timeout_s=timeout_s,
                         core_count=core_count,
@@ -237,6 +313,56 @@ def run_sweep(
     return done, success_count
 
 
+def run_progressive_sweep(
+    test: TestCase,
+    values: list[int],
+    runs: int,
+    total: int,
+    done_start: int,
+    repo: Path,
+    bin_dir: Path,
+    env: dict[str, str],
+    timeout_s: int,
+    custom_store: dict[str, dict[int, list[float]]],
+    pthread_store: dict[str, dict[int, list[float]]],
+    args_for_value: Callable[[int], list[str]],
+    progress_for_value: Callable[[str, int], str],
+    error_for_value: Callable[[str, int, str], str],
+) -> tuple[int, int]:
+    done = done_start
+    success_count = 0
+    active_impls = {"custom": True, "pthread": True}
+
+    for value in values:
+        test_args = args_for_value(value)
+        for _ in range(1, runs + 1):
+            for impl, exe in [
+                ("custom", bin_dir / test.name),
+                ("pthread", bin_dir / f"{test.name}-pthread"),
+            ]:
+                if not active_impls[impl]:
+                    continue
+
+                done += 1
+                print(f"[{done}/{total}] {progress_for_value(impl, value)}", flush=True)
+                ok, dt, detail = run_binary(
+                    exe,
+                    test_args,
+                    repo=repo,
+                    env=env,
+                    timeout_s=timeout_s,
+                )
+                if ok:
+                    success_count += 1
+                    target = custom_store if impl == "custom" else pthread_store
+                    target[test.name][value].append(dt)
+                else:
+                    active_impls[impl] = False
+                    print(error_for_value(impl, value, detail), flush=True)
+
+    return done, success_count
+
+
 def plot_scaling(
     path: Path,
     selected_tests: list[TestCase],
@@ -244,30 +370,15 @@ def plot_scaling(
     custom_times: dict[str, dict[int, list[float]]],
     pthread_times: dict[str, dict[int, list[float]]],
 ) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    fig, axes = make_axes(len(selected_tests))
-
-    for axis in axes[len(selected_tests):]:
-        axis.axis("off")
-
-    for axis, test in zip(axes, selected_tests):
-        y_custom = [median_or_nan(custom_times[test.name][core]) for core in core_counts]
-        y_pthread = [median_or_nan(pthread_times[test.name][core]) for core in core_counts]
-
-        axis.plot(core_counts, y_custom, marker="o", linewidth=2, label="thread.c")
-        axis.plot(core_counts, y_pthread, marker="o", linewidth=2, label="pthread")
-        axis.set_title(test.name)
-        axis.set_xlabel("Nombre de coeurs utilises")
-        axis.set_ylabel("Temps median (s)")
-        axis.grid(True, axis="y", alpha=0.3)
-        axis.set_xticks(core_counts)
-        axis.legend()
-
-    fig.suptitle("Temps d'execution en fonction du nombre de coeurs")
-    fig.tight_layout()
-    fig.savefig(path, dpi=180)
-    plt.close(fig)
+    plot_comparison(
+        path,
+        selected_tests,
+        core_counts,
+        custom_times,
+        pthread_times,
+        x_label="Nombre de coeurs utilises",
+        title="Temps d'execution en fonction du nombre de coeurs",
+    )
 
 
 def plot_thread_scaling(
@@ -278,32 +389,33 @@ def plot_thread_scaling(
     pthread_times: dict[str, dict[int, list[float]]],
     fixed_core_count: int,
 ) -> None:
-    if not selected_tests:
-        return
+    plot_comparison(
+        path,
+        selected_tests,
+        thread_counts,
+        custom_times,
+        pthread_times,
+        x_label="Nombre de threads",
+        title=f"Temps d'execution en fonction du nombre de threads (coeurs fixes={fixed_core_count})",
+    )
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = make_axes(len(selected_tests))
 
-    for axis in axes[len(selected_tests):]:
-        axis.axis("off")
-
-    for axis, test in zip(axes, selected_tests):
-        y_custom = [median_or_nan(custom_times[test.name][thread_count]) for thread_count in thread_counts]
-        y_pthread = [median_or_nan(pthread_times[test.name][thread_count]) for thread_count in thread_counts]
-
-        axis.plot(thread_counts, y_custom, marker="o", linewidth=2, label="thread.c")
-        axis.plot(thread_counts, y_pthread, marker="o", linewidth=2, label="pthread")
-        axis.set_title(test.name)
-        axis.set_xlabel("Nombre de threads")
-        axis.set_ylabel("Temps median (s)")
-        axis.grid(True, axis="y", alpha=0.3)
-        axis.set_xticks(thread_counts)
-        axis.legend()
-
-    fig.suptitle(f"Temps d'execution en fonction du nombre de threads (coeurs fixes={fixed_core_count})")
-    fig.tight_layout()
-    fig.savefig(path, dpi=180)
-    plt.close(fig)
+def plot_fibonacci(
+    path: Path,
+    selected_tests: list[TestCase],
+    fibonacci_values: list[int],
+    custom_times: dict[str, dict[int, list[float]]],
+    pthread_times: dict[str, dict[int, list[float]]],
+) -> None:
+    plot_comparison(
+        path,
+        selected_tests,
+        fibonacci_values,
+        custom_times,
+        pthread_times,
+        x_label="Valeur de fibonacci",
+        title="Temps d'execution en fonction de la valeur de fibonacci",
+    )
 
 
 def main() -> int:
@@ -312,9 +424,12 @@ def main() -> int:
     parser.add_argument("--repo", default=".")
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument("--timeout", type=int, default=20, help="Timeout par test en secondes")
-    parser.add_argument("--png", default="bench/results.png")
+    parser.add_argument("--png", default="graph_exec_time_comparison/bench/results.png")
     parser.add_argument("--cores", default=None, help="Liste de coeurs limites, ex: 1,2,4,8")
     parser.add_argument("--threads", default=None, help="Liste de nombres de threads pour tests 20/30, ex: 10,50,100")
+    parser.add_argument("--fibonacci-start", type=int, default=1, help="Valeur de depart pour le balayage fibonacci")
+    parser.add_argument("--fibonacci-max", type=int, default=45, help="Valeur maximale pour le balayage fibonacci")
+    parser.add_argument("--fibonacci-step", type=int, default=1, help="Pas pour le balayage fibonacci")
     parser.add_argument(
         "--test",
         default=None,
@@ -364,9 +479,46 @@ def main() -> int:
     try:
         core_counts = parse_core_counts(args.cores) if args.custom_tests else [1]
         thread_counts = parse_thread_counts(args.threads) if args.custom_tests else [1]
+        fibonacci_values = parse_fibonacci_values(args.fibonacci_start, args.fibonacci_max, args.fibonacci_step)
     except ValueError as exc:
         print(str(exc))
         return 2
+
+    fibonacci_test = next((test for test in selected_tests if test.name == "51-fibonacci"), None)
+    if len(selected_tests) == 1 and fibonacci_test is not None:
+        custom_times: dict[str, dict[int, list[float]]] = {
+            fibonacci_test.name: {value: [] for value in fibonacci_values}
+        }
+        pthread_times: dict[str, dict[int, list[float]]] = {
+            fibonacci_test.name: {value: [] for value in fibonacci_values}
+        }
+
+        total = len(fibonacci_values) * args.runs * 2
+        done, success_count = run_progressive_sweep(
+            test=fibonacci_test,
+            values=fibonacci_values,
+            runs=args.runs,
+            total=total,
+            done_start=0,
+            repo=repo,
+            bin_dir=bin_dir,
+            env=env,
+            timeout_s=args.timeout,
+            custom_store=custom_times,
+            pthread_store=pthread_times,
+            args_for_value=lambda value: [str(value)],
+            progress_for_value=lambda impl, value: f"{fibonacci_test.name} {impl} fib={value}",
+            error_for_value=lambda impl, value, detail: (
+                f"  -> echec ({impl} {fibonacci_test.name}, fib={value}): {detail}"
+            ),
+        )
+
+        png_path = resolve_png_output_path(repo, args.png)
+        plot_fibonacci(png_path, selected_tests, fibonacci_values, custom_times, pthread_times)
+
+        print(f"Graphe : {png_path}")
+        print(f"Executions reussies: {success_count}/{total}")
+        return 0
 
     custom_times: dict[str, dict[int, list[float]]] = {
         t.name: {core: [] for core in core_counts} for t in selected_tests
@@ -429,7 +581,7 @@ def main() -> int:
     )
     success_count += thread_success_count
 
-    png_path = (repo / args.png).resolve()
+    png_path = resolve_png_output_path(repo, args.png)
     png_thread_path = png_path.with_name(f"{png_path.stem}_threads{png_path.suffix}")
 
     plot_scaling(png_path, selected_tests, core_counts, custom_times, pthread_times)
@@ -448,7 +600,7 @@ def main() -> int:
     print(f"Executions reussies: {success_count}/{total}")
     return 0
 
-#commande pour compiler pour un test exemple du test 33 : make graphs ARGS="--custom-tests --test 33-switch-many-cascade --png bench/33.png --cores 1,2,4,8 --threads 10,50,100,200 --runs 3"
+#commande pour compiler pour un test exemple du test 33 : make graphs ARGS="--custom-tests --test 33-switch-many-cascade --png graph_exec_time_comparison/bench/33.png --cores 1,2,4,8 --threads 10,50,100,200 --runs 3"
 if __name__ == "__main__":
     raise SystemExit(main())
 
