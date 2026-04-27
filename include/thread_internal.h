@@ -30,9 +30,9 @@ typedef struct thread {
   struct thread *joined_by;    // The thread that is joining on this thread (if any)
   struct thread *waiting_for;  // The thread that is waiting for this thread to terminate (if any)
   int priority;                // Thread priority for scheduling
-  int in_ready_queue; // Set to 1 when enqueued in ready queue to prevent duplicate insertions,
-                      // reset to 0 when dequeued.
-  int affinity;      // Worker affinity (-1 = any worker)
+  int in_ready_queue;          // 1 when in ready queue, 0 otherwise
+  int in_zombie_queue;         // 1 when in zombie queue, 0 otherwise
+  int affinity;                // Worker affinity (-1 = any worker)
   struct thread **head_joiner; // Shared reference to the head of the joining chain
 #ifdef ENABLE_SIGNAL
   unsigned int pending_signals; // Bitmask of pending internal signals
@@ -42,17 +42,27 @@ typedef struct thread {
 #endif
 } thread;
 
+/* current_thread is defined in thread.c and used here. Provide small
+ * inline accessors so callers get zero-cost access while keeping a single
+ * canonical symbol for the variable in `thread.c`. */
+extern thread *current_thread;
+
+static inline thread *thread_get_current(void) { return current_thread; }
+static inline void thread_set_current(thread *t) { current_thread = t; }
+
+static inline int swap_thread(thread *prev, thread *next) {
+  thread_set_current(next);
+  next->state = THREAD_RUNNING;
+  fast_swap_context(&prev->context, &next->context);
+  return 0;
+}
+
 void thread_cleanup_register(void);
 void reclaim_deferred_stacks_all(void);
 void thread_switch_to_cleanup(void);
 void thread_zombie_add(thread *t);
 void thread_zombie_remove(thread *t);
 struct thread_queue *thread_get_ready_queue(void);
-thread *thread_get_current(void);
-void thread_set_current(thread *t);
-thread *thread_get_current_thread(void);
-void thread_set_current_thread(thread *t);
-int swap_thread(thread *prev, thread *next);
 thread *thread_scheduler_pick_next(void);
 thread *thread_scheduler_pick_next_locked(void);
 void thread_scheduler_enqueue(thread *t);

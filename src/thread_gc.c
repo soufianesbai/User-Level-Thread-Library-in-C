@@ -38,16 +38,19 @@ static void zombie_init(void) {
  */
 void thread_zombie_add(thread *t) {
   zombie_init();
+  t->in_zombie_queue = 1;
   TAILQ_INSERT_TAIL(&zombie_queue, t, entries);
 }
 
 /*
  * zombie_remove — removes a zombie thread from the zombie queue.
+ * Safe to call even if the thread was never zombified (in_zombie_queue == 0).
  */
 void thread_zombie_remove(thread *t) {
-  if (!zombie_initialized) {
+  if (!t->in_zombie_queue) {
     return;
   }
+  t->in_zombie_queue = 0;
   TAILQ_REMOVE(&zombie_queue, t, entries);
 }
 

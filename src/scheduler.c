@@ -97,21 +97,13 @@ thread *thread_scheduler_pick_next(void) {
   SCHED_UNLOCK();
   return next;
 }
-
-int swap_thread(thread *prev, thread *next) {
-  thread_set_current(next);
-  next->state = THREAD_RUNNING;
-  fast_swap_context(&prev->context, &next->context);
-  return 0;
-}
-
 int thread_yield(void) {
 #ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
 
+#endif
   thread *prev = thread_get_current();
-
 #ifdef THREAD_MULTICORE
   thread *worker_stub = thread_scheduler_get_worker_stub();
   if (worker_stub != NULL) {
@@ -131,6 +123,7 @@ int thread_yield(void) {
 #endif
 
   SCHED_LOCK();
+  
 
 #if THREAD_SCHED_POLICY == THREAD_SCHED_PRIO
   thread *t;

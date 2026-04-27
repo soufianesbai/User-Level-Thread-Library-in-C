@@ -19,11 +19,10 @@ static thread main_thread = {.id = 0,
                              .affinity = -1,
                              .waiting_for = NULL,
                              .head_joiner = NULL};
-/*
- * current thread pointer is thread-local in multicore mode so each worker has
+
+/* current thread pointer is thread-local in multicore mode so each worker has
  * its own currently-running user thread. In monocore mode this is still a
- * single global pointer (THREAD_LOCAL expands to empty).
- */
+ * single global pointer (THREAD_LOCAL expands to empty). */
 static THREAD_LOCAL thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
@@ -50,6 +49,9 @@ static int head_ref_active_index = 0;
 static struct stack_entry deferred_stacks[MAX_DEFERRED_STACKS];
 static int deferred_stack_count = 0;
 
+/* Prefill count for stack allocator — set to 0 to avoid preallocating mappings
+ * in benchmark runs where deferred reclaim already supplies stacks. */
+#define STACK_PREFILL_COUNT 0
 static void reclaim_deferred_stacks_batch(int budget) {
   SCHED_LOCK();
   while (deferred_stack_count > 0 && budget-- > 0) {
@@ -185,23 +187,6 @@ static void thread_obj_release(thread *t) {
 
   thread_free(t);
 }
-
-thread *thread_get_current(void) {
-  return current_thread;
-}
-
-void thread_set_current(thread *t) {
-  current_thread = t;
-}
-
-thread *thread_get_current_thread(void) {
-  return thread_get_current();
-}
-
-void thread_set_current_thread(thread *t) {
-  thread_set_current(t);
-}
-
 /*
   a wrapper for the preemption signal handler that just yields the current thread.
   sigaction take an func(int) not a func(void)
@@ -302,6 +287,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->priority = THREAD_DEFAULT_PRIORITY;
   newth->affinity = -1;
   newth->in_ready_queue = 0;
+  newth->in_zombie_queue = 0;
   newth->joined_by = NULL;
   newth->waiting_for = NULL;
 #ifdef ENABLE_SIGNAL
@@ -374,7 +360,13 @@ void thread_exit(void *retval) {
     // A terminating thread cannot safely recycle its own running stack.
     // Defer stack reuse until another thread is running.
     defer_stack_reclaim(dying);
-    thread_zombie_add(dying);
+    // If a joiner is properly blocked waiting for us, it will claim the
+    // struct directly when it wakes up — no zombie queue needed.
+    // Check state == BLOCKED to guard against the EDEADLK path where
+    // joined_by is set but the joiner already returned without blocking.
+    if (dying->joined_by == NULL || dying->joined_by->state != THREAD_BLOCKED) {
+      thread_zombie_add(dying);
+    }
   }
 
   // If a thread was waiting on this one, unblock it now
