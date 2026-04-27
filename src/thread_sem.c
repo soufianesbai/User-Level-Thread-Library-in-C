@@ -24,7 +24,6 @@ int thread_sem_destroy(thread_sem_t *sem) {
   if (sem == NULL || !TAILQ_EMPTY(&sem->waiting_queue))
     return -1;
   sem->count = 0;
-  sem = NULL;
   return 0;
 }
 

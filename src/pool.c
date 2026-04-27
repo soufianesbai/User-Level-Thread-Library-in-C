@@ -7,6 +7,16 @@
 #include <sys/queue.h>
 #include <valgrind/valgrind.h>
 
+#ifdef THREAD_MULTICORE
+#include <pthread.h>
+static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
+#define POOL_LOCK()   pthread_mutex_lock(&pool_lock)
+#define POOL_UNLOCK() pthread_mutex_unlock(&pool_lock)
+#else
+#define POOL_LOCK()   ((void)0)
+#define POOL_UNLOCK() ((void)0)
+#endif
+
 #ifndef THREAD_DISABLE_GUARD_PAGE
 #define THREAD_DISABLE_GUARD_PAGE 1
 #endif
@@ -31,11 +41,14 @@ static int stack_pool_size = 0;
  * Slow path (pool empty): allocate a new mapping and set a guard page.
  */
 int stack_pool_alloc(struct stack_entry *entry) {
+  POOL_LOCK();
   if (stack_pool_size > 0) {
     /* Reuse a previously pooled stack. */
     *entry = stack_pool[--stack_pool_size];
+    POOL_UNLOCK();
     return 0;
   }
+  POOL_UNLOCK();
 
   /*
    * Allocate a fresh stack mapping with one guard page at the low address.
@@ -78,36 +91,37 @@ int stack_pool_alloc(struct stack_entry *entry) {
  * unloaded systems while preventing OOM on large workloads.
  */
 void stack_pool_push(struct stack_entry *entry) {
+  POOL_LOCK();
   if (stack_pool_size >= MAX_POOLED_STACKS) {
-    /* Pool full: release the mapping instead of storing it. */
+    POOL_UNLOCK();
     VALGRIND_STACK_DEREGISTER(entry->valgrind_id);
     munmap(entry->map, STACK_SIZE + GUARD_SIZE);
     return;
   }
 
-  /* Release physical pages only when the pool is well-stocked.
-   * Below the threshold the working set is small and the pool entries
-   * will be reused soon — paying a MADV_FREE syscall would only add
-   * overhead.  Above the threshold idle stacks would otherwise pin RAM
-   * (relevant for large fibonacci-style workloads). */
   if (stack_pool_size > 8192)
     madvise(entry->map, STACK_SIZE + GUARD_SIZE, MADV_FREE);
 
-  /* Normal path: store for later reuse. */
   stack_pool[stack_pool_size++] = *entry;
+  POOL_UNLOCK();
 }
 
 int stack_pool_empty(void) {
-  return stack_pool_size == 0;
+  POOL_LOCK();
+  int empty = stack_pool_size == 0;
+  POOL_UNLOCK();
+  return empty;
 }
 
 /*
  * stack_pool_free_all — drain all pooled stacks at program exit.
  */
 void stack_pool_free_all(void) {
+  POOL_LOCK();
   for (int i = 0; i < stack_pool_size; ++i) {
     VALGRIND_STACK_DEREGISTER(stack_pool[i].valgrind_id);
     munmap(stack_pool[i].map, STACK_SIZE + GUARD_SIZE);
   }
   stack_pool_size = 0;
+  POOL_UNLOCK();
 }

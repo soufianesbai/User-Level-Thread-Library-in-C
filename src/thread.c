@@ -50,8 +50,6 @@ static int head_ref_active_index = 0;
 static struct stack_entry deferred_stacks[MAX_DEFERRED_STACKS];
 static int deferred_stack_count = 0;
 
-#define STACK_PREFILL_COUNT 4096
-
 static void reclaim_deferred_stacks_batch(int budget) {
   SCHED_LOCK();
   while (deferred_stack_count > 0 && budget-- > 0) {
@@ -259,16 +257,6 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
 #ifdef ENABLE_PREEMPTION
     init_prem(preemption_handler, 100);
 #endif
-
-    /*
-     * Pre-fill the stack pool so early thread_create() calls can reuse
-     * mappings instead of paying mmap()+mprotect() on the critical path.
-     */
-    for (int i = 0; i < STACK_PREFILL_COUNT; i++) {
-      struct stack_entry e;
-      if (stack_pool_alloc(&e) == 0)
-        stack_pool_push(&e);
-    }
 
     scheduler_initialized = 1;
   }

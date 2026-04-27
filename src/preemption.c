@@ -2,7 +2,6 @@
 
 #include <signal.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <sys/time.h>
 
 static struct itimerval timer;
@@ -24,7 +23,6 @@ void preem_mask_init(void) {
 }
 
 int init_prem(void (*func)(int), int us) {
-  printf("Initializing preemption with interval %d us\n", us);
   sa.sa_handler = func;
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = SA_RESTART;

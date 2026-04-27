@@ -24,6 +24,7 @@ static int scheduler_running = 0;
 static THREAD_LOCAL int tls_worker_id = -1;
 static THREAD_LOCAL thread tls_worker_stub;
 static THREAD_LOCAL int tls_worker_stub_initialized = 0;
+static THREAD_LOCAL thread *tls_last_yielded = NULL;
 #endif
 
 struct thread_queue *thread_get_ready_queue(void) {
@@ -109,25 +110,19 @@ int thread_yield(void) {
   preem_block();
 #endif
 
-  reclaim_deferred_stacks_all();
-
   thread *prev = thread_get_current();
 
 #ifdef THREAD_MULTICORE
   thread *worker_stub = thread_scheduler_get_worker_stub();
   if (worker_stub != NULL) {
-    SCHED_LOCK();
-    if (prev->state == THREAD_RUNNING) {
-      prev->state = THREAD_READY;
-      thread_scheduler_enqueue_locked(prev);
-    }
-    SCHED_UNLOCK();
-
-    /* Restore the worker-loop context saved the last time the worker ran a
-     * user thread. This makes the worker able to continue scheduling from the
-     * same OS thread without a separate dummy user-context. */
+    /*
+     * Tell the worker loop which thread is yielding so it can re-enqueue us
+     * AFTER fast_swap_context has saved our register state. Enqueueing before
+     * the save would let another worker restore a half-written context.
+     */
+    tls_last_yielded = prev;
     fast_swap_context(&prev->context, &worker_stub->context);
-
+    /* Resumed here when the worker loop picks us again. */
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
@@ -218,6 +213,29 @@ int thread_yield_to(thread_t target_handle) {
 
   TAILQ_REMOVE(&ready_queue, target, entries);
   target->in_ready_queue = 0;
+
+#ifdef THREAD_MULTICORE
+  thread *worker_stub = thread_scheduler_get_worker_stub();
+  if (worker_stub != NULL) {
+    /*
+     * Direct thread-to-thread swaps are unsafe in multicore: prev would be
+     * enqueued before fast_swap_context saves its registers, letting another
+     * worker restore a half-written context (same race as the yield bug).
+     * Instead, put target at the head of the queue so this worker picks it
+     * immediately, then yield back through the worker stub safely.
+     */
+    TAILQ_INSERT_HEAD(&ready_queue, target, entries);
+    target->in_ready_queue = 1;
+    SCHED_UNLOCK();
+    tls_last_yielded = prev;
+    fast_swap_context(&prev->context, &worker_stub->context);
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
+    return 0;
+  }
+#endif
+
   target->state = THREAD_RUNNING;
 
   prev->state = THREAD_READY;
@@ -306,14 +324,28 @@ static void *thread_worker_loop(void *arg) {
       if (next != NULL) {
         SCHED_UNLOCK();
         /*
-         * Save the worker-loop context into the worker stub, then run the
-         * selected user thread. When that user thread yields/exits, it will
-         * restore this saved context and resume here.
+         * Clear before running so thread_exit (which doesn't set
+         * tls_last_yielded) doesn't leave a stale pointer from a prior yield.
          */
+        tls_last_yielded = NULL;
         thread_set_current(next);
         fast_swap_context(&tls_worker_stub.context, &next->context);
         thread_set_current(&tls_worker_stub);
         tls_worker_stub.state = THREAD_RUNNING;
+        /*
+         * Re-enqueue the thread that yielded back to us via the worker-stub
+         * path. The context is now fully saved, so it is safe to make it
+         * visible to other workers. Threads that exited or blocked have states
+         * THREAD_TERMINATED / THREAD_BLOCKED and are skipped.
+         */
+        SCHED_LOCK();
+        thread *yielded = tls_last_yielded;
+        if (yielded != NULL && yielded->state == THREAD_RUNNING) {
+          yielded->state = THREAD_READY;
+          thread_scheduler_enqueue_locked(yielded);
+        }
+        tls_last_yielded = NULL;
+        SCHED_UNLOCK();
         goto continue_loop;
       }
       SCHED_WAIT();
