@@ -1,105 +1,163 @@
 /* context.S — fast context switch, no sigprocmask syscall.
  *
- * Supports x86-64 and AArch64.  The C preprocessor (invoked by GCC for
- * upper-case .S files) selects the right block at build time.
+ * This file implements a minimal context switch system.
  *
- * struct fast_ctx field offsets are defined in include/context.h and
- * must stay in sync with the constants used here.
+ * We manually save/restore only the minimal CPU state required to
+ * suspend and resume execution of a thread:
+ *
+ *   - instruction pointer (PC / RIP / LR)
+ *   - stack pointer (SP)
+ *   - callee-saved registers
+ *
+ * This avoids kernel involvement and is significantly faster than
+ * swapcontext() which performs signal mask syscalls.
+ *
+ * IMPORTANT:
+ * ----------
+ * The layout of struct fast_ctx in context.h MUST match exactly
+ * the offsets used here.
  */
 
-/* ================================================================== */
-/* AArch64                                                             */
-/* ================================================================== */
+/* ================================================================
+ * AARCH64 (ARM64)
+ * ================================================================ */
 #ifdef __aarch64__
 
 .text
 
 /*
- * fast_swap_context(struct fast_ctx *save, const struct fast_ctx *restore)
+ * fast_swap_context(save, restore)
  *
- * Saves the caller's callee-saved registers + SP into *save (x0),
- * then restores from *restore (x1) and returns via the restored lr.
+ * x0 = save context (of the current thread)
+ * x1 = restore context (for the next thread)
  *
- * AArch64 callee-saved: x19-x28, x29 (fp), sp.
- * x30 (lr) holds the return address on entry (set by the bl instruction).
- *
- * struct fast_ctx offsets:
- *   0  lr   8  sp  16 x19  24 x20  32 x21  40 x22  48 x23
- *  56 x24  64 x25  72 x26  80 x27  88 x28  96 fp(x29)
+ * This function:
+ *   1. saves current CPU state into *save
+ *   2. loads CPU state from *restore
+ *   3. jumps into restored execution
  */
 .global fast_swap_context
 .type   fast_swap_context, %function
+
 fast_swap_context:
-    /* --- save current context into *save (x0) --- */
-    str  x30,      [x0, #0]       /* lr  = return address    */
+
+    /* ------------------------------------------------------------
+     * SAVE CURRENT THREAD CONTEXT
+     * ------------------------------------------------------------ */
+
+    /* Save return address (LR = x30) */
+    str  x30,      [x0, #0]       /* save LR */
+
+    /* Save stack pointer */
     mov  x9, sp
-    str  x9,       [x0, #8]       /* sp                      */
+    str  x9,       [x0, #8]
+
+    /* Save callee-saved registers (must be preserved across calls) */
     stp  x19, x20, [x0, #16]
     stp  x21, x22, [x0, #32]
     stp  x23, x24, [x0, #48]
     stp  x25, x26, [x0, #64]
     stp  x27, x28, [x0, #80]
-    str  x29,      [x0, #96]      /* fp                      */
 
-    /* --- restore from *restore (x1) --- */
+    /* Save frame pointer */
+    str  x29,      [x0, #96]
+
+    /* ------------------------------------------------------------
+     * RESTORE NEXT THREAD CONTEXT
+     * ------------------------------------------------------------ */
+
+    /* Restore callee-saved registers */
     ldp  x19, x20, [x1, #16]
     ldp  x21, x22, [x1, #32]
     ldp  x23, x24, [x1, #48]
     ldp  x25, x26, [x1, #64]
     ldp  x27, x28, [x1, #80]
-    ldr  x29,      [x1, #96]      /* fp                      */
+
+    /* Restore frame pointer */
+    ldr  x29,      [x1, #96]
+
+    /* Restore stack pointer */
     ldr  x9,       [x1, #8]
-    mov  sp, x9                   /* sp                      */
-    ldr  x30,      [x1, #0]       /* lr = return addr/entry  */
-    ret                           /* branch to x30           */
+    mov  sp, x9
+
+    /* Restore program counter (LR) */
+    ldr  x30,      [x1, #0]
+
+    /* Jump into restored execution context */
+    ret
+
 .size fast_swap_context, .-fast_swap_context
 
 
 /*
- * fast_restore_context(const struct fast_ctx *ctx)
+ * fast_restore_context(ctx)
  *
- * Restore without saving — for dying threads (thread_exit).
- * x0 = ctx
+ * Restore a context WITHOUT saving current one.
+ * Used when a thread terminates.
  */
 .global fast_restore_context
 .type   fast_restore_context, %function
+
 fast_restore_context:
+
+    /* Restore callee-saved registers */
     ldp  x19, x20, [x0, #16]
     ldp  x21, x22, [x0, #32]
     ldp  x23, x24, [x0, #48]
     ldp  x25, x26, [x0, #64]
     ldp  x27, x28, [x0, #80]
+
+    /* Restore frame pointer */
     ldr  x29,      [x0, #96]
+
+    /* Restore stack pointer */
     ldr  x9,       [x0, #8]
     mov  sp, x9
+
+    /* Restore program counter */
     ldr  x30,      [x0, #0]
+
+    /* Jump directly (no return to caller) */
     ret
+
 .size fast_restore_context, .-fast_restore_context
 
 
-/* ================================================================== */
-/* x86-64                                                              */
-/* ================================================================== */
+/* ================================================================
+ * X86-64 (PC ARCHITECTURE)
+ * ================================================================ */
 #elif defined(__x86_64__)
 
 .text
 
 /*
- * fast_swap_context(struct fast_ctx *save, const struct fast_ctx *restore)
+ * fast_swap_context(save, restore)
  *
- * Saves callee-saved registers + RSP into *save (rdi),
- * then restores from *restore (rsi) and jumps to restore->rip.
+ * rdi = save context (current thread)
+ * rsi = restore context (next thread)
  *
- * struct fast_ctx offsets:
- *   0 rip   8 rsp  16 rbx  24 rbp  32 r12  40 r13  48 r14  56 r15
+ * Saves current CPU state and switches execution.
  */
 .global fast_swap_context
 .type   fast_swap_context, @function
+
 fast_swap_context:
-    /* --- save current context into *save (rdi) --- */
+
+    /* ------------------------------------------------------------
+     * SAVE CURRENT THREAD CONTEXT
+     * ------------------------------------------------------------ */
+
+    /*
+     * Save a return address for later resumption.
+     * We simulate a function return point (.Lresume).
+     */
     leaq    .Lresume(%rip), %rax
-    movq    %rax,  0(%rdi)        /* rip = resume label      */
-    movq    %rsp,  8(%rdi)        /* rsp                     */
+    movq    %rax,  0(%rdi)        /* RIP */
+
+    /* Save stack pointer */
+    movq    %rsp,  8(%rdi)
+
+    /* Save callee-saved registers (System V ABI) */
     movq    %rbx, 16(%rdi)
     movq    %rbp, 24(%rdi)
     movq    %r12, 32(%rdi)
@@ -107,43 +165,66 @@ fast_swap_context:
     movq    %r14, 48(%rdi)
     movq    %r15, 56(%rdi)
 
-    /* --- restore from *restore (rsi) --- */
+    /* ------------------------------------------------------------
+     * RESTORE NEXT THREAD CONTEXT
+     * ------------------------------------------------------------ */
+
     movq    16(%rsi), %rbx
     movq    24(%rsi), %rbp
     movq    32(%rsi), %r12
     movq    40(%rsi), %r13
     movq    48(%rsi), %r14
     movq    56(%rsi), %r15
-    movq     8(%rsi), %rsp
-    jmpq    *0(%rsi)              /* jump to rip             */
+
+    /* Switch stack */
+    movq    8(%rsi), %rsp
+
+    /* Jump into next thread execution */
+    jmpq    *0(%rsi)
 
 .Lresume:
+    /*
+     * When a thread is resumed, execution continues here.
+     * The 'ret' restores normal C execution flow.
+     */
     ret
+
 .size fast_swap_context, .-fast_swap_context
 
 
 /*
- * fast_restore_context(const struct fast_ctx *ctx)
+ * fast_restore_context(ctx)
  *
- * Restore without saving — for dying threads (thread_exit).
- * rdi = ctx
+ * Restore context without saving current one.
+ * Used when a thread exits.
  */
 .global fast_restore_context
 .type   fast_restore_context, @function
+
 fast_restore_context:
+
+    /* Restore registers */
     movq    16(%rdi), %rbx
     movq    24(%rdi), %rbp
     movq    32(%rdi), %r12
     movq    40(%rdi), %r13
     movq    48(%rdi), %r14
     movq    56(%rdi), %r15
-    movq     8(%rdi), %rsp
+
+    /* Restore stack pointer */
+    movq    8(%rdi), %rsp
+
+    /* Jump directly to context */
     jmpq    *0(%rdi)
+
 .size fast_restore_context, .-fast_restore_context
 
 #endif /* architecture */
 
-/* Tell the linker this object does not need an executable stack. */
+
+/* ================================================================
+ * Prevent executable stack (security hardening)
+ * ================================================================ */
 #if defined(__linux__)
 .section .note.GNU-stack,"",@progbits
 #endif
