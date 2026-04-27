@@ -39,6 +39,33 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
   preem_block();
 #endif
 
+#ifdef THREAD_MULTICORE
+  while (1) {
+    SCHED_LOCK();
+
+    if (mutex->locked == -1) {
+      SCHED_UNLOCK();
+      errno = EINVAL;
+#ifdef ENABLE_PREEMPTION
+      preem_unblock();
+#endif
+      return -1;
+    }
+
+    if (!mutex->locked) {
+      mutex->locked = 1;
+      SCHED_UNLOCK();
+#ifdef ENABLE_PREEMPTION
+      preem_unblock();
+#endif
+      return 0;
+    }
+
+    SCHED_UNLOCK();
+    thread_yield();
+  }
+#endif
+
   SCHED_LOCK();
 
   if (mutex->locked == -1) {

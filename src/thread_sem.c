@@ -42,9 +42,25 @@ int thread_sem_wait(thread_sem_t *sem) {
   preem_block();
 #endif
 
+#ifdef THREAD_MULTICORE
+  while (1) {
+    SCHED_LOCK();
+    if (sem->count > 0) {
+      sem->count--;
+      SCHED_UNLOCK();
+#ifdef ENABLE_PREEMPTION
+      preem_unblock();
+#endif
+      return 0;
+    }
+    SCHED_UNLOCK();
+    thread_yield();
+  }
+#endif
+
+  SCHED_LOCK();
   if (sem->count > 0) {
     // Fast path : la ressource est disponible
-    SCHED_LOCK();
     sem->count--;
     SCHED_UNLOCK();
 #ifdef ENABLE_PREEMPTION
@@ -52,6 +68,7 @@ int thread_sem_wait(thread_sem_t *sem) {
 #endif
     return 0;
   }
+  SCHED_UNLOCK();
 
   // Slow path : on se bloque jusqu'à ce qu'un post() nous réveille
   thread *prev = thread_get_current();

@@ -397,12 +397,13 @@ void thread_exit(void *retval) {
     if (worker_stub != NULL) {
       /*
        * Return to the worker loop context saved in the worker stub. The
-       * worker loop handles waiting for new READY threads and clean shutdown
-       * when scheduler_running=0.
+       * current thread is TERMINATED and will never run again, so there is no
+       * need to save its context here. Restoring directly avoids touching the
+       * dying thread object while a concurrent joiner may recycle it.
        */
       thread_set_current(worker_stub);
       worker_stub->state = THREAD_RUNNING;
-      fast_swap_context(&dying->context, &worker_stub->context);
+      fast_restore_context(&worker_stub->context);
     }
 #endif
     thread_switch_to_cleanup();
