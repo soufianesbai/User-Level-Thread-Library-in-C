@@ -59,17 +59,36 @@ int thread_sem_wait(thread_sem_t *sem) {
   SCHED_LOCK();
   thread *next = thread_scheduler_pick_next_locked();
 
+  prev->state = THREAD_BLOCKED;
+  TAILQ_INSERT_TAIL(&sem->waiting_queue, prev, entries);
+
+#ifdef THREAD_MULTICORE
+  {
+    thread *worker_stub = thread_scheduler_get_worker_stub();
+    if (worker_stub != NULL) {
+      if (next != NULL) {
+        next->state = THREAD_READY;
+        thread_scheduler_enqueue_locked(next);
+      }
+      SCHED_UNLOCK();
+      fast_swap_context(&prev->context, &worker_stub->context);
+#ifdef ENABLE_PREEMPTION
+      preem_unblock();
+#endif
+      return 0;
+    }
+  }
+#endif
+
   if (next == NULL) {
+    TAILQ_REMOVE(&sem->waiting_queue, prev, entries);
+    prev->state = THREAD_RUNNING;
     SCHED_UNLOCK();
-    // Aucun thread ne peut faire un post() — deadlock
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
     return -1;
   }
-
-  prev->state = THREAD_BLOCKED;
-  TAILQ_INSERT_TAIL(&sem->waiting_queue, prev, entries);
 
   SCHED_UNLOCK();
 

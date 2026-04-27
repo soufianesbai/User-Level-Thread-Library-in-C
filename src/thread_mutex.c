@@ -64,28 +64,50 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
   // We will return here with the mutex already owned (locked stays 1).
   thread *prev = thread_get_current();
   thread *next = thread_scheduler_pick_next_locked();
+
+  prev->state = THREAD_BLOCKED;
+  TAILQ_INSERT_TAIL(&mutex->waiting_queue, prev, entries);
+
+#ifdef THREAD_MULTICORE
+  {
+    thread *worker_stub = thread_scheduler_get_worker_stub();
+    if (worker_stub != NULL) {
+      /*
+       * Never do direct thread-to-thread swaps in multicore: return the
+       * picked thread to the ready queue and let the worker loop dispatch it
+       * safely. No READY threads is fine too — other workers are running
+       * threads that will call mutex_unlock and wake us via SCHED_SIGNAL.
+       */
+      if (next != NULL) {
+        next->state = THREAD_READY;
+        thread_scheduler_enqueue_locked(next);
+      }
+      SCHED_UNLOCK();
+      fast_swap_context(&prev->context, &worker_stub->context);
+#ifdef ENABLE_PREEMPTION
+      preem_unblock();
+#endif
+      return 0;
+    }
+  }
+#endif
+
+  /* Monocore path */
   if (next == NULL) {
+    TAILQ_REMOVE(&mutex->waiting_queue, prev, entries);
+    prev->state = THREAD_RUNNING;
     SCHED_UNLOCK();
-    // No other thread is ready to run — cannot proceed without risking livelock
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
     return -1;
   }
 
-  // Park current thread: BLOCKED state means thread_yield() won't pick it up
-  prev->state = THREAD_BLOCKED;
-  TAILQ_INSERT_TAIL(&mutex->waiting_queue, prev, entries);
-
   SCHED_UNLOCK();
-
   swap_thread(prev, next);
 #ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
-
-  // When we return here, unlock() has transferred ownership to us.
-  // mutex->locked is still 1 — we are the new owner.
   return 0;
 }
 

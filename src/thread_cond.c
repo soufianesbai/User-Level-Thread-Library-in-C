@@ -56,20 +56,39 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
     mutex->locked = 0;
   }
 
+  // Bloque dans la cond, le mutex est déjà relâché ci-dessus
+  prev->state = THREAD_BLOCKED;
+  TAILQ_INSERT_TAIL(&cond->waiting_queue, prev, entries);
+
+#ifdef THREAD_MULTICORE
+  {
+    thread *worker_stub = thread_scheduler_get_worker_stub();
+    if (worker_stub != NULL) {
+      if (next != NULL) {
+        next->state = THREAD_READY;
+        thread_scheduler_enqueue_locked(next);
+      }
+      SCHED_UNLOCK();
+      fast_swap_context(&prev->context, &worker_stub->context);
+#ifdef ENABLE_PREEMPTION
+      preem_unblock();
+#endif
+      thread_mutex_lock(mutex);
+      return 0;
+    }
+  }
+#endif
+
   if (next == NULL) {
+    TAILQ_REMOVE(&cond->waiting_queue, prev, entries);
+    prev->state = THREAD_RUNNING;
     SCHED_UNLOCK();
-    // Aucun thread prêt — on ne peut pas se bloquer sans deadlock
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
-    // Réacquiert le mutex avant de retourner en erreur
     thread_mutex_lock(mutex);
     return -1;
   }
-
-  // Retire next de la ready_queue et se bloque dans la cond
-  prev->state = THREAD_BLOCKED;
-  TAILQ_INSERT_TAIL(&cond->waiting_queue, prev, entries);
 
   SCHED_UNLOCK();
 
@@ -77,8 +96,7 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
   next->state = THREAD_RUNNING;
   fast_swap_context(&prev->context, &next->context);
 
-  // Quand on revient ici, signal/broadcast nous a remis dans la ready_queue
-  // et on a été re-sélectionné par le scheduler.
+  // Quand on revient ici, signal/broadcast nous a remis dans la ready_queue.
   // Il faut réacquérir le mutex avant de retourner.
 #ifdef ENABLE_PREEMPTION
   preem_unblock();
