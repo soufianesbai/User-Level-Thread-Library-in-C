@@ -5,7 +5,7 @@
 
 /*
  *
- * Minimal context-switching implementation.
+ * Minimal and fast context-switching implementation.
  *
  * Instead of saving the full OS context using swapcontext(),
  * we only save:
@@ -15,12 +15,12 @@
  *   - callee-saved registers
  *
  * Because:
- * - Caller-saved registers are volatile (not needed)
- * These are registers that the called function is required to restore them before returning.
- * - Callee-saved registers must survive function calls
- * These are registers that the called function is required to save them to use them afterwards.
- * - Stack pointer defines execution stack
- * - PC defines execution location (contains the adress of the next instruction)
+ * - Caller-saved registers are volatile: the caller must save them if needed,
+ *   the callee is free to overwrite them.
+ * - Callee-saved registers must survive function calls: the callee must restore
+ *   them before returning, so they hold their value across a context switch.
+ * - Stack pointer defines the execution stack.
+ * - PC defines the execution location (address of the next instruction to execute).
  */
 
 /* ================================================================
@@ -33,17 +33,15 @@
  *
  * IMPORTANT:
  * - uint64_t is used to guarantee exact 64-bit size
- * - layout MUST match context.S offsets exactly
+ * - layout must match context.S offsets exactly
  */
 struct fast_ctx {
 
-  /* (LR) - Link register (return address)
-   * Where execution will resume when returning
-   or where a thread will start execution */
+  /* LR — link register: holds the return address on function call.
+   * Used as entry point when the thread is first scheduled. */
   uint64_t lr; /* offset 0 */
 
-  /* Stack pointer (SP) */
-  uint64_t sp; /* offset 8 */
+  uint64_t sp; /* offset 8  — stack pointer */
 
   /* Callee-saved registers (must be preserved across calls) */
   uint64_t x19; /* offset 16 */
@@ -57,8 +55,7 @@ struct fast_ctx {
   uint64_t x27; /* offset 80 */
   uint64_t x28; /* offset 88 */
 
-  /* Frame pointer used for stack frames */
-  uint64_t fp; /* offset 96 */
+  uint64_t fp; /* offset 96 — frame pointer */
 };
 
 /*
@@ -68,21 +65,12 @@ static inline void fast_ctx_init(struct fast_ctx *ctx, void *stack_top, void (*e
   uintptr_t sp = (uintptr_t)stack_top;
 
   /* ARM64 requires 16-byte aligned stack */
-  // Align stack pointer down to nearest 16-byte boundary
   sp &= ~(uintptr_t)15;
 
-  /*
-   * When thread starts, LR must point to entry function.
-   */
   ctx->lr = (uint64_t)(uintptr_t)entry;
-
-  /* Initialize stack pointer */
   ctx->sp = sp;
 
-  /*
-   * Clear registers (clean initial state)
-   * No previous execution context exists.
-   */
+  /* Zero callee-saved registers: no previous execution context exists. */
   ctx->x19 = ctx->x20 = ctx->x21 = ctx->x22 = ctx->x23 = ctx->x24 = ctx->x25 = ctx->x26 = ctx->x27 =
       ctx->x28 = ctx->fp = 0;
 }
@@ -94,11 +82,8 @@ static inline void fast_ctx_init(struct fast_ctx *ctx, void *stack_top, void (*e
 
 struct fast_ctx {
 
-  /* Instruction pointer (where execution resumes) */
-  uint64_t rip; /* offset 0 */
-
-  /* Stack pointer */
-  uint64_t rsp; /* offset 8 */
+  uint64_t rip; /* offset 0  — instruction pointer */
+  uint64_t rsp; /* offset 8  — stack pointer */
 
   /* Callee-saved registers */
   uint64_t rbx; /* offset 16 */
@@ -119,24 +104,17 @@ static inline void fast_ctx_init(struct fast_ctx *ctx, void *stack_top, void (*e
   sp &= ~(uintptr_t)15;
 
   /*
-   * Simulate a CALL instruction:
-   * CALL pushes return address on stack.
+   * Simulate a CALL: push a fake return address so the stack is 16-byte
+   * aligned when the entry function executes its prologue (ABI requirement).
+   * The address is zero — the thread must never return from entry().
    */
-  // Move stack pointer down to reserve space for return address
   sp -= 8;
-
-  /* Fake return address (never used but required for ret safety) */
   *(uint64_t *)sp = 0;
 
-  /*
-   * Entry point of thread execution
-   */
   ctx->rip = (uint64_t)(uintptr_t)entry;
-
-  /* Set stack pointer */
   ctx->rsp = sp;
 
-  /* Clear callee-saved registers */
+  /* Zero callee-saved registers: no previous execution context exists. */
   ctx->rbx = ctx->rbp = ctx->r12 = ctx->r13 = ctx->r14 = ctx->r15 = 0;
 }
 
@@ -150,7 +128,7 @@ static inline void fast_ctx_init(struct fast_ctx *ctx, void *stack_top, void (*e
 void fast_swap_context(struct fast_ctx *save, const struct fast_ctx *restore);
 
 /*
- * Restore a context WITHOUT saving current one
+ * Restore a context without saving current one
  * (used when a thread exits)
  */
 void fast_restore_context(const struct fast_ctx *ctx);
