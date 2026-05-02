@@ -23,7 +23,6 @@ int thread_sem_destroy(thread_sem_t *sem) {
   if (sem == NULL || !TAILQ_EMPTY(&sem->waiting_queue))
     return -1;
   sem->count = 0;
-  sem = NULL;
   return 0;
 }
 
@@ -52,7 +51,6 @@ int thread_sem_wait(thread_sem_t *sem) {
   }
 
   // Slow path : on se bloque jusqu'à ce qu'un post() nous réveille
-  struct thread_queue *ready_queue = thread_get_ready_queue();
   thread *prev = thread_get_current_thread();
   thread *next = thread_scheduler_pick_next();
 
@@ -63,8 +61,6 @@ int thread_sem_wait(thread_sem_t *sem) {
 #endif
     return -1;
   }
-
-  TAILQ_REMOVE(ready_queue, next, entries);
 
   prev->state = THREAD_BLOCKED;
   TAILQ_INSERT_TAIL(&sem->waiting_queue, prev, entries);

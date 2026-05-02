@@ -211,6 +211,11 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     init_prem(preemption_handler, 100);
 #endif
 
+    /* Install the SIGSEGV handler + sigaltstack for stack overflow detection.
+     * Must be done after the guard page is set up (pool.c) and before any
+     * thread can overflow. */
+    init_stack_overflow_detection();
+
     scheduler_initialized = 1;
   }
 
@@ -252,6 +257,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   newth->in_zombie_queue = 0;
   newth->joined_by = NULL;
   newth->waiting_for = NULL;
+  newth->stack_overflow = 0;
 #ifdef ENABLE_SIGNAL
   newth->pending_signals = 0;
   newth->blocked_signals = 0;
@@ -476,6 +482,9 @@ int thread_join(thread_t thread_handle, void **retval) {
     *retval = target->retval;
   }
 
+  /* Save before releasing the struct back to the pool. */
+  int overflowed = target->stack_overflow;
+
   // Claim the zombie and return its stack to the pool
 #ifdef ENABLE_PREEMPTION
   preem_block();
@@ -495,6 +504,11 @@ int thread_join(thread_t thread_handle, void **retval) {
 #ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
+
+  if (overflowed) {
+    errno = EFAULT;
+    return -1;
+  }
 
   return 0;
 }

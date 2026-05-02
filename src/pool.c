@@ -7,8 +7,10 @@
 #include <sys/queue.h>
 #include <valgrind/valgrind.h>
 
-#ifndef THREAD_DISABLE_GUARD_PAGE
-#define THREAD_DISABLE_GUARD_PAGE 1
+/* Guard page enabled by default for stack overflow detection.
+ * Override with -DTHREAD_ENABLE_GUARD_PAGE=0 to disable (better perf on alloc-heavy workloads). */
+#ifndef THREAD_ENABLE_GUARD_PAGE
+#define THREAD_ENABLE_GUARD_PAGE 1
 #endif
 
 /*
@@ -52,7 +54,7 @@ int stack_pool_alloc(struct stack_entry *entry) {
   }
 
   /* Make the guard page inaccessible unless disabled for benchmark speed. */
-#if !THREAD_DISABLE_GUARD_PAGE
+#if THREAD_ENABLE_GUARD_PAGE
   if (mprotect(map, GUARD_SIZE, PROT_NONE) == -1) {
     munmap(map, STACK_SIZE + GUARD_SIZE);
     return -1;
@@ -70,11 +72,11 @@ int stack_pool_alloc(struct stack_entry *entry) {
 /*
  * stack_pool_push — return a stack to the pool for reuse.
  *
- * If the pool is full, free the stack immediately.
- * Otherwise, push it in O(1) and release its physical pages via
- * MADV_FREE so that idle stacks do not pin RAM.  MADV_FREE is advisory:
- * if the OS has not yet reclaimed the pages when the stack is next
- * popped, no page fault occurs — making it essentially free on
+ * If the pool is full, the stack is unmapped immediately.
+ * Otherwise, it is stored in O(1). Above a pool size threshold (8192),
+ * MADV_FREE is also called to release the physical pages backing idle stacks.
+ * MADV_FREE is advisory: if the OS has not yet reclaimed the pages when the
+ * stack is next popped, no page fault occurs — making it essentially free on
  * unloaded systems while preventing OOM on large workloads.
  */
 void stack_pool_push(struct stack_entry *entry) {

@@ -114,10 +114,10 @@ fast_restore_context:
     ldr  x9,       [x0, #8]
     mov  sp, x9
 
-    /* Restore program counter */
+    /* Load the entry point into LR (x30), then branch to it via ret.
+     * ret here is not a function return — it branches to whatever address
+     * is in x30, which is the next thread's entry point. */
     ldr  x30,      [x0, #0]
-
-    /* Jump directly (no return to caller) */
     ret
 
 .size fast_restore_context, .-fast_restore_context
@@ -169,6 +169,7 @@ fast_swap_context:
      * RESTORE NEXT THREAD CONTEXT
      * ------------------------------------------------------------ */
 
+    /* Restore callee-saved registers (System V ABI) */
     movq    16(%rsi), %rbx
     movq    24(%rsi), %rbp
     movq    32(%rsi), %r12
@@ -183,10 +184,8 @@ fast_swap_context:
     jmpq    *0(%rsi)
 
 .Lresume:
-    /*
-     * When a thread is resumed, execution continues here.
-     * The 'ret' restores normal C execution flow.
-     */
+    /* Execution resumes here when this thread is next scheduled.
+     * ret returns to swap_thread(), the C caller of fast_swap_context. */
     ret
 
 .size fast_swap_context, .-fast_swap_context
@@ -203,7 +202,7 @@ fast_swap_context:
 
 fast_restore_context:
 
-    /* Restore registers */
+    /* Restore callee-saved registers */
     movq    16(%rdi), %rbx
     movq    24(%rdi), %rbp
     movq    32(%rdi), %r12

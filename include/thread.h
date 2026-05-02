@@ -50,7 +50,11 @@ extern int thread_yield_to(thread_t target);
 
 /* Block until thread terminates and store its return value in *retval.
  * If retval is NULL the return value is discarded.
- * Returns 0 on success, EDEADLK if a join cycle is detected, -1 on error. */
+ * Returns:
+ *   0        — success
+ *   EDEADLK  — join cycle detected (like pthread_join)
+ *   -1       — other error (check errno):
+ *     EFAULT : thread was killed by a stack overflow */
 extern int thread_join(thread_t thread, void **retval);
 
 /* Terminate the calling thread and make retval available to thread_join().

@@ -37,7 +37,6 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
   preem_block();
 #endif
 
-  struct thread_queue *ready_queue = thread_get_ready_queue();
   thread *prev = thread_get_current_thread();
   thread *next = thread_scheduler_pick_next();
 
@@ -64,8 +63,6 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
     return -1;
   }
 
-  // Retire next de la ready_queue et se bloque dans la cond
-  TAILQ_REMOVE(ready_queue, next, entries);
   prev->state = THREAD_BLOCKED;
   TAILQ_INSERT_TAIL(&cond->waiting_queue, prev, entries);
 
@@ -122,9 +119,6 @@ int thread_cond_broadcast(thread_cond_t *cond) {
 #ifdef ENABLE_PREEMPTION
   preem_block();
 #endif
-
-  struct thread_queue *ready_queue = thread_get_ready_queue();
-  (void)ready_queue; // Unused when no threads are waiting
 
   while (!TAILQ_EMPTY(&cond->waiting_queue)) {
     thread *revived = TAILQ_FIRST(&cond->waiting_queue);

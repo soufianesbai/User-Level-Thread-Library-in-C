@@ -102,7 +102,6 @@ int thread_sigwait(thread_sigset_t set, int *sig) {
     }
 
     swap_thread(prev, next);
-    thread_get_current_thread()->state = THREAD_RUNNING;
   }
 }
 
