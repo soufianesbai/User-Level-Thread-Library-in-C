@@ -39,7 +39,6 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
 #endif
 
   thread *prev = thread_get_current();
-
   SCHED_LOCK();
   thread *next = thread_scheduler_pick_next_locked();
 
@@ -147,7 +146,10 @@ int thread_cond_broadcast(thread_cond_t *cond) {
   preem_block();
 #endif
 
+<<<<<<< HEAD
   SCHED_LOCK();
+=======
+>>>>>>> b479ed7 (fix bugs, implement stack overflow detection, add signal test, clean up Makefile)
   while (!TAILQ_EMPTY(&cond->waiting_queue)) {
     thread *revived = TAILQ_FIRST(&cond->waiting_queue);
     TAILQ_REMOVE(&cond->waiting_queue, revived, entries);

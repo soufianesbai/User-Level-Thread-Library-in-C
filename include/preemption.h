@@ -24,4 +24,16 @@ void preem_unblock(void);
  */
 int init_prem(void (*func)(int), int us);
 
+/*
+ * Set up stack overflow detection.
+ *
+ * Installs a SIGSEGV handler (SA_SIGINFO | SA_ONSTACK) and a static alternate
+ * signal stack via sigaltstack(). When a thread overflows into its guard page,
+ * the handler sets the thread's stack_overflow flag and calls thread_exit(),
+ * terminating only the faulty thread without disturbing others.
+ *
+ * Must be called once at scheduler init. Safe to call multiple times (no-op).
+ */
+void init_stack_overflow_detection(void);
+
 #endif /* PREEMPTION_H */

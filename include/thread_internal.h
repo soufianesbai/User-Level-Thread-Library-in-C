@@ -80,7 +80,14 @@ typedef struct thread {
    * Comparing two threads' head_joiner pointers detects membership in the same chain in O(1). */
   struct thread **head_joiner;
 
+<<<<<<< HEAD
 >>>>>>> 96588ff (full include documentation)
+=======
+  /* Set to 1 if this thread was terminated by a stack overflow (guard page fault).
+   * thread_join() returns EFAULT when this flag is set. */
+  int stack_overflow;
+
+>>>>>>> b479ed7 (fix bugs, implement stack overflow detection, add signal test, clean up Makefile)
 #ifdef ENABLE_SIGNAL
   unsigned int pending_signals; /* bitmask of signals delivered but not yet handled */
   unsigned int blocked_signals; /* bitmask of signals currently masked */
