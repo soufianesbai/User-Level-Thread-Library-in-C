@@ -10,20 +10,34 @@ static struct itimerval timer;
 static struct sigaction sa;
 static sigset_t sigvtalrm_mask;
 
+/* Block SIGVTALRM delivery on the calling thread.
+ * All scheduler data-structure accesses that must not be interrupted
+ * mid-operation are wrapped with preem_block() / preem_unblock(). */
 void preem_block(void) {
   sigprocmask(SIG_BLOCK, &sigvtalrm_mask, NULL);
 }
 
+/* Unblock SIGVTALRM, allowing preemption to fire again. */
 void preem_unblock(void) {
   sigprocmask(SIG_UNBLOCK, &sigvtalrm_mask, NULL);
 }
 
-// Call once at init, before arming the timer
+/* Build the signal mask used by preem_block/unblock. Called once at init. */
 void preem_mask_init(void) {
   sigemptyset(&sigvtalrm_mask);
   sigaddset(&sigvtalrm_mask, SIGVTALRM);
 }
 
+/*
+ * init_prem — set up timer-based preemption.
+ *
+ * Registers func as the SIGVTALRM handler with SA_RESTART so that
+ * interrupted syscalls are restarted transparently. Then arms a virtual
+ * (per-process CPU time) interval timer that fires every `us` microseconds,
+ * driving involuntary context switches.
+ *
+ * Returns 0 on success, -1 on error.
+ */
 int init_prem(void (*func)(int), int us) {
   sa.sa_handler = func;
   sigemptyset(&sa.sa_mask);
@@ -53,6 +67,15 @@ int init_prem(void (*func)(int), int us) {
 static char altstack_mem[ALTSTACK_SIZE];
 static int overflow_detection_initialized = 0;
 
+/*
+ * sigsegv_handler — SIGSEGV handler for stack overflow detection.
+ *
+ * Runs on the alternate stack (SA_ONSTACK). Checks whether the faulting
+ * address falls inside the current thread's guard page. If so, marks the
+ * thread as overflowed and calls thread_exit() to switch away cleanly.
+ * For any other SIGSEGV, restores the default handler and re-raises so
+ * the process terminates with a proper signal.
+ */
 static void sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
   (void)sig;
   (void)uctx;
@@ -75,6 +98,18 @@ static void sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
   raise(SIGSEGV);
 }
 
+/*
+ * init_stack_overflow_detection — install the SIGSEGV overflow handler.
+ *
+ * Sets up a static alternate stack via sigaltstack() and installs
+ * sigsegv_handler with SA_SIGINFO | SA_ONSTACK so it runs on the
+ * alternate stack even when the thread stack is exhausted. SIGVTALRM
+ * is blocked during the handler to prevent a preemption context switch
+ * while running on the altstack.
+ *
+ * Idempotent: safe to call multiple times (no-op after first call).
+ * Only meaningful when THREAD_ENABLE_GUARD_PAGE=1.
+ */
 void init_stack_overflow_detection(void) {
   if (overflow_detection_initialized)
     return;
@@ -91,8 +126,6 @@ void init_stack_overflow_detection(void) {
   sa_segv.sa_sigaction = sigsegv_handler;
   sa_segv.sa_flags = SA_SIGINFO | SA_ONSTACK;
   sigemptyset(&sa_segv.sa_mask);
-  /* Block SIGVTALRM during the handler to prevent a preemption context switch
-   * while we are already handling a fault on the altstack. */
   sigaddset(&sa_segv.sa_mask, SIGVTALRM);
   sigaction(SIGSEGV, &sa_segv, NULL);
 

@@ -62,6 +62,11 @@ void reclaim_deferred_stacks_all(void);
 void thread_switch_to_cleanup(void);
 void thread_zombie_add(thread *t);
 void thread_zombie_remove(thread *t);
+<<<<<<< HEAD
+=======
+
+/* Return a pointer to the scheduler's ready queue. */
+>>>>>>> 7281f55 (final code)
 struct thread_queue *thread_get_ready_queue(void);
 thread *thread_scheduler_pick_next(void);
 thread *thread_scheduler_pick_next_locked(void);

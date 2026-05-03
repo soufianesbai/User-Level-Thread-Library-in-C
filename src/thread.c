@@ -10,8 +10,8 @@
 #include <sys/queue.h>
 #include <valgrind/valgrind.h>
 
-// The main thread is initialized at the start of the program and will be used
-// as the initial context for the main execution flow.
+/* The main thread represents the initial execution context (the process's
+ * entry point). It is stack-allocated and never freed. */
 static thread main_thread = {.id = 0,
                              .state = THREAD_RUNNING,
                              .joined_by = NULL,
@@ -67,6 +67,17 @@ void reclaim_deferred_stacks_all(void) {
   reclaim_deferred_stacks_batch(MAX_DEFERRED_STACKS);
 }
 
+/*
+ * defer_stack_reclaim — queue t's stack for recycling by another thread.
+ *
+ * A terminating thread cannot push its own stack back to the pool while
+ * still running on it. Instead we record it in deferred_stacks[] so the
+ * next thread_create() (or thread_pool_free_all at exit) can safely push
+ * it to the pool once we have switched away.
+ *
+ * Clears t->stack_map/stack_base to prevent thread_join() from pushing
+ * the same stack a second time.
+ */
 static void defer_stack_reclaim(thread *t) {
   if (t == NULL || t->stack_map == NULL) {
     return;
@@ -83,7 +94,7 @@ static void defer_stack_reclaim(thread *t) {
         .valgrind_id = t->valgrind_stack_id,
     };
 
-    // Mark ownership transferred so thread_join() does not push twice.
+    /* Mark ownership transferred so thread_join() does not push twice. */
     t->stack_map = NULL;
     t->stack_base = NULL;
   }
@@ -145,6 +156,15 @@ static void thread_free(thread *t) {
   }
 }
 
+/*
+ * thread_head_ref_alloc — allocate a head_joiner slot for owner.
+ *
+ * head_joiner is a shared pointer to the head of a join chain: all threads
+ * in the same chain point to the same slot, so cycle detection is O(1)
+ * (compare pointers). We allocate slots from fixed-size chunks to amortize
+ * malloc overhead — one malloc per HEAD_REF_CHUNK_SIZE threads instead of
+ * one per thread. Chunks are freed in bulk by thread_pool_free_all().
+ */
 static thread **thread_head_ref_alloc(thread *owner) {
   SCHED_LOCK();
   if (head_ref_active_chunk == NULL || head_ref_active_index >= HEAD_REF_CHUNK_SIZE) {
@@ -187,10 +207,16 @@ static void thread_obj_release(thread *t) {
 
   thread_free(t);
 }
+<<<<<<< HEAD
 /*
   a wrapper for the preemption signal handler that just yields the current thread.
   sigaction take an func(int) not a func(void)
 */
+=======
+
+/* Preemption signal handler: called by SIGVTALRM, triggers a voluntary yield.
+ * sigaction requires a handler of type void(*)(int), hence the unused sig. */
+>>>>>>> 7281f55 (final code)
 void preemption_handler(int sig) {
   (void)sig;
   thread_yield();

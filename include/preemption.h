@@ -5,9 +5,8 @@
  * Block/unblock SIGVTALRM delivery on the calling thread.
  *
  * Use these around any scheduler data structure access that must not be
- * interrupted mid-operation (e.g. run-queue manipulation, thread state
- * transitions). Calls may be nested: each block must be paired with an
- * unblock.
+ * interrupted mid-operation. Calls may be nested: each block must be
+ * paired with an unblock.
  */
 void preem_block(void);
 void preem_unblock(void);
