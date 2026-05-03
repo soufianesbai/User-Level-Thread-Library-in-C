@@ -7,14 +7,14 @@
 
 /* Priority bounds and defaults for THREAD_SCHED_PRIO */
 #define THREAD_DEFAULT_PRIORITY 10
-#define THREAD_MAX_PRIORITY     100
-#define THREAD_MIN_PRIORITY     0
+#define THREAD_MAX_PRIORITY 100
+#define THREAD_MIN_PRIORITY 0
 
 /* Under THREAD_SCHED_PRIO, on each yield:
  * - THREAD_AGING is subtracted from the running thread's priority (prevents monopolization).
  * - THREAD_WAIT  is added to every waiting thread's priority (prevents starvation). */
 #define THREAD_AGING 2
-#define THREAD_WAIT  1
+#define THREAD_WAIT 1
 
 #ifndef THREAD_SCHED_POLICY
 #define THREAD_SCHED_POLICY THREAD_SCHED_FIFO

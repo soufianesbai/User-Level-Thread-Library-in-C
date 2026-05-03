@@ -1,9 +1,6 @@
 #include "preemption.h"
 #include "thread_sync_internal.h"
 #include "thread_internal.h"
-#include "preemption.h"
-#include "thread_sync_internal.h"
-#include "thread_internal.h"
 #include <errno.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -469,4 +466,3 @@ int thread_set_affinity(thread_t thread_handle, int worker_id) {
   return 0;
 #endif
 }
-  }

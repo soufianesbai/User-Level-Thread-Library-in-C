@@ -17,7 +17,7 @@
 struct stack_entry {
   void *map;   /* base of the full mmap'd region (guard + stack) */
   void *stack; /* top of the usable stack (passed to fast_ctx_init) */
-  
+
   /* Valgrind requires explicit registration of mmap'd stacks; without it,
    * it reports false positives on every stack access. */
   unsigned valgrind_id;
