@@ -49,12 +49,9 @@ static int head_ref_active_index = 0;
 static struct stack_entry deferred_stacks[MAX_DEFERRED_STACKS];
 static int deferred_stack_count = 0;
 
-<<<<<<< HEAD
 /* Prefill count for stack allocator — set to 0 to avoid preallocating mappings
  * in benchmark runs where deferred reclaim already supplies stacks. */
 #define STACK_PREFILL_COUNT 0
-=======
->>>>>>> 3bef1b9 (fix)
 static void reclaim_deferred_stacks_batch(int budget) {
   SCHED_LOCK();
   while (deferred_stack_count > 0 && budget-- > 0) {
