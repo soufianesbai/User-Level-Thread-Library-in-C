@@ -23,14 +23,13 @@
 #define THREAD_BLOCKED    3
 
 typedef struct thread {
-  int id;                      /* unique thread identifier */
   struct fast_ctx context;     /* saved CPU registers (callee-saved + PC/SP only) */
+
+  /* -- Pointers -- */
   void *(*start_fun)(void *);  /* entry function supplied by the caller */
   void *arg;                   /* argument forwarded to start_fun */
-  TAILQ_ENTRY(thread) entries; /* list node for ready/zombie queues */
-  int state;                   /* current lifecycle state */
+  TAILQ_ENTRY(thread) entries; /* list node for ready/zombie/wait queues */
   void *retval;                /* value returned by start_fun, retrieved by joiner */
-  unsigned valgrind_stack_id;  /* handle for Valgrind's mmap'd-stack tracking */
   void *stack_map;             /* base of the full mmap region (guard + stack) */
   void *stack_base;            /* top of the usable stack (= stack_map + GUARD_SIZE) */
 
@@ -42,17 +41,18 @@ typedef struct thread {
   struct thread *joined_by;    /* thread blocked waiting for this thread to terminate */
   struct thread *waiting_for;  /* thread this thread is currently blocked on */
 
-  int priority;                /* scheduling priority (higher value = higher priority) */
-  int in_ready_queue;          /* guard against double-insertion in the ready queue */
-  int in_zombie_queue;         /* guard against double-insertion in the zombie queue */
-
   /* All threads in the same joining chain share this pointer to their common head.
    * Comparing two threads' head_joiner pointers detects membership in the same chain in O(1). */
   struct thread **head_joiner;
 
-  /* Set to 1 if this thread was terminated by a stack overflow (guard page fault).
-   * thread_join() returns EFAULT when this flag is set. */
-  int stack_overflow;
+  /* -- Integers -- */
+  int id;                      /* unique thread identifier */
+  int state;                   /* current lifecycle state */
+  unsigned valgrind_stack_id;  /* handle for Valgrind's mmap'd-stack tracking */
+  int priority;                /* scheduling priority (higher value = higher priority) */
+  int in_ready_queue;          /* guard against double-insertion in the ready queue */
+  int in_zombie_queue;         /* guard against double-insertion in the zombie queue */
+  int stack_overflow;          /* set to 1 if killed by a stack overflow (guard page fault) */
 
 #ifdef ENABLE_SIGNAL
   unsigned int pending_signals; /* bitmask of signals delivered but not yet handled */

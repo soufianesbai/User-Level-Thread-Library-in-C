@@ -92,8 +92,8 @@ void stack_pool_push(struct stack_entry *entry) {
    * will be reused soon — paying a MADV_FREE syscall would only add
    * overhead.  Above the threshold idle stacks would otherwise pin RAM
    * (relevant for large fibonacci-style workloads). */
-  if (stack_pool_size > 8192)
-    madvise(entry->map, STACK_SIZE + GUARD_SIZE, MADV_FREE);
+  if (stack_pool_size > 65536)
+    madvise((char *)entry->map + GUARD_SIZE, STACK_SIZE, MADV_FREE);
 
   /* Normal path: store for later reuse. */
   stack_pool[stack_pool_size++] = *entry;

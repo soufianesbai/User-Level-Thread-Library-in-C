@@ -4,19 +4,62 @@
 #include <stddef.h>
 #include <sys/queue.h>
 
-static struct thread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
+/* ── FIFO: array ring buffer ─────────────────────────────────────────────── */
+#if THREAD_SCHED_POLICY == THREAD_SCHED_FIFO
 
-struct thread_queue *thread_get_ready_queue(void) {
-  return &ready_queue;
-}
+/*
+ * Ring buffer for the ready queue.
+ * O(1) enqueue/dequeue with bitmask wrapping — no pointer chasing.
+ * Size must be >= max simultaneously READY threads; 1<<18 = 262144 covers
+ * fib(29+) peak plus slack for lazy-deleted slots left by thread_yield_to.
+ */
+#define RING_BITS 18
+#define RING_SIZE (1 << RING_BITS)
+#define RING_MASK (RING_SIZE - 1)
+
+static thread *ready_ring[RING_SIZE];
+static unsigned ring_head = 0;
+static unsigned ring_tail = 0;
+
+struct thread_queue *thread_get_ready_queue(void) { return NULL; }
+
+int thread_ready_queue_empty(void) { return ring_head == ring_tail; }
 
 void thread_scheduler_enqueue(thread *t) {
-  if (t == NULL || t->in_ready_queue)
+  if (t->in_ready_queue)
     return;
-#if THREAD_SCHED_POLICY == THREAD_SCHED_FIFO
   t->in_ready_queue = 1;
-  TAILQ_INSERT_TAIL(&ready_queue, t, entries);
+  ready_ring[ring_tail++ & RING_MASK] = t;
+}
+
+/*
+ * Pop the next runnable thread.
+ * Slots whose in_ready_queue was cleared by thread_yield_to are skipped
+ * (lazy deletion — avoids O(n) search for arbitrary removal in a ring).
+ */
+thread *thread_scheduler_pick_next(void) {
+  while (ring_head != ring_tail) {
+    thread *next = ready_ring[ring_head++ & RING_MASK];
+    if (next->in_ready_queue) {
+      next->in_ready_queue = 0;
+      return next;
+    }
+  }
+  return NULL;
+}
+
+/* ── PRIO: sorted TAILQ ──────────────────────────────────────────────────── */
 #elif THREAD_SCHED_POLICY == THREAD_SCHED_PRIO
+
+static struct thread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
+
+struct thread_queue *thread_get_ready_queue(void) { return &ready_queue; }
+
+int thread_ready_queue_empty(void) { return TAILQ_EMPTY(&ready_queue); }
+
+void thread_scheduler_enqueue(thread *t) {
+  if (t->in_ready_queue)
+    return;
   thread *cursor;
   TAILQ_FOREACH(cursor, &ready_queue, entries) {
     if (t->priority > cursor->priority) {
@@ -27,7 +70,6 @@ void thread_scheduler_enqueue(thread *t) {
   }
   t->in_ready_queue = 1;
   TAILQ_INSERT_TAIL(&ready_queue, t, entries);
-#endif
 }
 
 thread *thread_scheduler_pick_next(void) {
@@ -38,6 +80,8 @@ thread *thread_scheduler_pick_next(void) {
   next->in_ready_queue = 0;
   return next;
 }
+
+#endif /* THREAD_SCHED_POLICY */
 
 int thread_yield(void) {
 #ifdef ENABLE_PREEMPTION
@@ -115,6 +159,15 @@ int thread_yield_to(thread_t target_handle) {
   thread *prev = thread_get_current_thread();
   prev->state = THREAD_READY;
   thread_scheduler_enqueue(prev);
+
+#if THREAD_SCHED_POLICY == THREAD_SCHED_FIFO
+  /* Lazy-remove target from the ring: clear the guard so pick_next skips
+   * the stale slot when it is eventually popped off the head. */
+  target->in_ready_queue = 0;
+#elif THREAD_SCHED_POLICY == THREAD_SCHED_PRIO
+  TAILQ_REMOVE(&ready_queue, target, entries);
+  target->in_ready_queue = 0;
+#endif
 
   swap_thread(prev, target);
 
