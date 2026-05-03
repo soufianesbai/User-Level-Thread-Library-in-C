@@ -241,7 +241,7 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
   int alloc_retries = 0;
   while (stack_pool_alloc(&stack_entry) == -1) {
     reclaim_deferred_stacks_all();
-    if (TAILQ_EMPTY(thread_get_ready_queue()) || alloc_retries++ >= 4096) {
+    if (thread_ready_queue_empty() || alloc_retries++ >= 4096) {
       thread_obj_release(newth);
       errno = ENOMEM;
       return -1;

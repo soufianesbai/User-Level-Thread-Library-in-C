@@ -32,7 +32,7 @@ int main(void) {
 #define SIG2 2
 #define SIG3 3
 #define SIG4 4
-#define SIGBIT(s) ((thread_sigset_t)(1u << ((unsigned int)(s) - 1u)))
+#define SIGBIT(s) ((thread_sigset_t)(1u << ((unsigned int)(s)-1u)))
 
 /* --- Test 1: blocking sigwait ------------------------------------------ */
 static int t1_received;
