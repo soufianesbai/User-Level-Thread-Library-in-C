@@ -71,7 +71,8 @@ static inline void fast_ctx_init(struct fast_ctx *ctx, void *stack_top, void (*e
   ctx->sp = sp;
 
   /* Zero callee-saved registers: no previous execution context exists. */
-  ctx->x19 = ctx->x20 = ctx->x21 = ctx->x22 = ctx->x23 = ctx->x24 = ctx->x25 = ctx->x26 = ctx->x27 = ctx->x28 = ctx->fp = 0;
+  ctx->x19 = ctx->x20 = ctx->x21 = ctx->x22 = ctx->x23 = ctx->x24 = ctx->x25 = ctx->x26 = ctx->x27 =
+      ctx->x28 = ctx->fp = 0;
 }
 
 /* ================================================================

@@ -21,9 +21,13 @@ static thread *ready_ring[RING_SIZE];
 static unsigned ring_head = 0;
 static unsigned ring_tail = 0;
 
-struct thread_queue *thread_get_ready_queue(void) { return NULL; }
+struct thread_queue *thread_get_ready_queue(void) {
+  return NULL;
+}
 
-int thread_ready_queue_empty(void) { return ring_head == ring_tail; }
+int thread_ready_queue_empty(void) {
+  return ring_head == ring_tail;
+}
 
 void thread_scheduler_enqueue(thread *t) {
   if (t->in_ready_queue)
@@ -53,9 +57,13 @@ thread *thread_scheduler_pick_next(void) {
 
 static struct thread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
 
-struct thread_queue *thread_get_ready_queue(void) { return &ready_queue; }
+struct thread_queue *thread_get_ready_queue(void) {
+  return &ready_queue;
+}
 
-int thread_ready_queue_empty(void) { return TAILQ_EMPTY(&ready_queue); }
+int thread_ready_queue_empty(void) {
+  return TAILQ_EMPTY(&ready_queue);
+}
 
 void thread_scheduler_enqueue(thread *t) {
   if (t->in_ready_queue)

@@ -63,9 +63,8 @@ static void sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
   char *fault = (char *)info->si_addr;
 
   /* Check if the fault address falls inside the current thread's guard page. */
-  if (t != NULL && t->stack_map != NULL &&
-      fault >= (char *)t->stack_map &&
-      fault <  (char *)t->stack_map + GUARD_SIZE) {
+  if (t != NULL && t->stack_map != NULL && fault >= (char *)t->stack_map &&
+      fault < (char *)t->stack_map + GUARD_SIZE) {
     t->stack_overflow = 1;
     /* thread_exit() switches to the next thread's stack permanently.
      * The altstack frame is abandoned but never reused while we are in it. */
@@ -83,8 +82,8 @@ void init_stack_overflow_detection(void) {
     return;
 
   stack_t ss = {
-      .ss_sp    = altstack_mem,
-      .ss_size  = ALTSTACK_SIZE,
+      .ss_sp = altstack_mem,
+      .ss_size = ALTSTACK_SIZE,
       .ss_flags = 0,
   };
   if (sigaltstack(&ss, NULL) == -1)
@@ -92,7 +91,7 @@ void init_stack_overflow_detection(void) {
 
   struct sigaction sa_segv;
   sa_segv.sa_sigaction = sigsegv_handler;
-  sa_segv.sa_flags     = SA_SIGINFO | SA_ONSTACK;
+  sa_segv.sa_flags = SA_SIGINFO | SA_ONSTACK;
   sigemptyset(&sa_segv.sa_mask);
   /* Block SIGVTALRM during the handler to prevent a preemption context switch
    * while we are already handling a fault on the altstack. */

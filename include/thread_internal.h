@@ -17,13 +17,13 @@
  * BLOCKED:    waiting for an event (join, mutex, cond, signal).
  * TERMINATED: start_fun returned; retval is set; waiting for a joiner.
  */
-#define THREAD_READY      0
-#define THREAD_RUNNING    1
+#define THREAD_READY 0
+#define THREAD_RUNNING 1
 #define THREAD_TERMINATED 2
-#define THREAD_BLOCKED    3
+#define THREAD_BLOCKED 3
 
 typedef struct thread {
-  struct fast_ctx context;     /* saved CPU registers (callee-saved + PC/SP only) */
+  struct fast_ctx context; /* saved CPU registers (callee-saved + PC/SP only) */
 
   /* -- Pointers -- */
   void *(*start_fun)(void *);  /* entry function supplied by the caller */
@@ -38,21 +38,21 @@ typedef struct thread {
    *   A->joined_by   = B  (who is waiting on A)
    *   B->waiting_for = A  (what B is blocked on)
    */
-  struct thread *joined_by;    /* thread blocked waiting for this thread to terminate */
-  struct thread *waiting_for;  /* thread this thread is currently blocked on */
+  struct thread *joined_by;   /* thread blocked waiting for this thread to terminate */
+  struct thread *waiting_for; /* thread this thread is currently blocked on */
 
   /* All threads in the same joining chain share this pointer to their common head.
    * Comparing two threads' head_joiner pointers detects membership in the same chain in O(1). */
   struct thread **head_joiner;
 
   /* -- Integers -- */
-  int id;                      /* unique thread identifier */
-  int state;                   /* current lifecycle state */
-  unsigned valgrind_stack_id;  /* handle for Valgrind's mmap'd-stack tracking */
-  int priority;                /* scheduling priority (higher value = higher priority) */
-  int in_ready_queue;          /* guard against double-insertion in the ready queue */
-  int in_zombie_queue;         /* guard against double-insertion in the zombie queue */
-  int stack_overflow;          /* set to 1 if killed by a stack overflow (guard page fault) */
+  int id;                     /* unique thread identifier */
+  int state;                  /* current lifecycle state */
+  unsigned valgrind_stack_id; /* handle for Valgrind's mmap'd-stack tracking */
+  int priority;               /* scheduling priority (higher value = higher priority) */
+  int in_ready_queue;         /* guard against double-insertion in the ready queue */
+  int in_zombie_queue;        /* guard against double-insertion in the zombie queue */
+  int stack_overflow;         /* set to 1 if killed by a stack overflow (guard page fault) */
 
 #ifdef ENABLE_SIGNAL
   unsigned int pending_signals; /* bitmask of signals delivered but not yet handled */
