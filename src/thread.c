@@ -246,10 +246,14 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     init_prem(preemption_handler, 100);
 #endif
 
+#ifdef THREAD_ENABLE_OVERFLOW_DETECTION
     /* Install the SIGSEGV handler + sigaltstack for stack overflow detection.
-     * Must be done after the guard page is set up (pool.c) and before any
-     * thread can overflow. */
+     * Requires THREAD_ENABLE_GUARD_PAGE=1 to be meaningful.
+     * Disabled by default: the sigaltstack+SA_ONSTACK setup adds measurable
+     * per-thread overhead even when no overflow occurs. Enable explicitly with
+     * make THREAD_ENABLE_OVERFLOW_DETECTION=1 for correctness testing. */
     init_stack_overflow_detection();
+#endif
 
     scheduler_initialized = 1;
   }
