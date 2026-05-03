@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <sys/queue.h>
 
+/* thread_mutex_init — initialize mutex to the unlocked state. */
 int thread_mutex_init(thread_mutex_t *mutex) {
   if (mutex == NULL)
     return -1;
@@ -12,11 +13,17 @@ int thread_mutex_init(thread_mutex_t *mutex) {
   return 0;
 }
 
+/*
+ * thread_mutex_destroy — mark the mutex as destroyed.
+ *
+ * Fails if threads are still waiting: destroying under waiters would
+ * leave them blocked forever. On success, locked is set to -1 as a
+ * sentinel so that any subsequent lock/unlock detects the invalid state
+ * and returns EINVAL instead of silently corrupting data.
+ */
 int thread_mutex_destroy(thread_mutex_t *mutex) {
-  if (mutex == NULL || !TAILQ_EMPTY(&mutex->waiting_queue)) {
-    // Do not destroy a mutex if threads are still waiting on it
+  if (mutex == NULL || !TAILQ_EMPTY(&mutex->waiting_queue))
     return -1;
-  }
   mutex->locked = -1;
   return 0;
 }

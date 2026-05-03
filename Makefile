@@ -18,6 +18,9 @@ endif
 ifeq ($(ENABLE_SIGNAL),1)
 CPPFLAGS += -DENABLE_SIGNAL
 endif
+# Separate flags for the overflow-detection build (avoids THREAD_ENABLE_GUARD_PAGE redefinition)
+CPPFLAGS_OVERFLOW = -I$(INCLUDE_DIR) -DTHREAD_SCHED_POLICY=$(THREAD_SCHED_VALUE) \
+	-DTHREAD_ENABLE_GUARD_PAGE=1 -DTHREAD_ENABLE_OVERFLOW_DETECTION
 # Directories
 SRC_DIR = src
 INCLUDE_DIR = include
@@ -36,18 +39,19 @@ ASM_SRC = $(wildcard $(SRC_DIR)/*.S)
 OBJ = $(patsubst $(SRC_DIR)/%.c, %.o, $(SRC))
 LIB = libthread.so
 LIB_PREEM = libthread_preem.so
+LIB_OVERFLOW = libthread_overflow.so
 
 
 # List of tests (get all .c files in test/)
 TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
 TEST_BINS = $(patsubst $(TEST_DIR)/%.c, %, $(TEST_SRCS))
 TEST_BINS_PTHREAD = $(patsubst %, %-pthread, $(TEST_BINS))
-TEST_BINS_NORMAL = $(filter-out 71-preemption,$(TEST_BINS))
+TEST_BINS_NORMAL = $(filter-out 71-preemption 72-stack-overflow,$(TEST_BINS))
 FORMAT_SRCS = $(wildcard $(SRC_DIR)/*.c) $(wildcard $(INCLUDE_DIR)/*.h) $(wildcard $(TEST_DIR)/*.c) $(wildcard $(TEST_DIR)/*.h)
 
 # --- Main targets ---
 
-all: compat-headers $(LIB) $(LIB_PREEM) tests preemptive-tests pthreads
+all: compat-headers $(LIB) $(LIB_PREEM) tests preemptive-tests overflow-tests pthreads
 
 compat-headers: $(COMPAT_HEADERS)
 
@@ -79,6 +83,17 @@ tests: compat-headers $(LIB)
 preemptive-tests: compat-headers $(LIB_PREEM)
 	@mkdir -p bin
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_DIR)/71-preemption.c -L. -lthread_preem $(RPATH_FLAGS) -o bin/71-preemption $(LDFLAGS)
+
+
+# Build the overflow-detection library (guard page ON + overflow detection ON)
+$(LIB_OVERFLOW): $(SRC) $(ASM_SRC)
+	$(CC) $(CPPFLAGS_OVERFLOW) $(CFLAGS) -shared -o $@ $^
+
+# Build 72-stack-overflow with the overflow-detection library
+overflow-tests: compat-headers $(LIB_OVERFLOW)
+	@mkdir -p bin
+	$(CC) $(CPPFLAGS_OVERFLOW) $(CFLAGS) \
+		$(TEST_DIR)/72-stack-overflow.c -L. -lthread_overflow $(RPATH_FLAGS) -o bin/72-stack-overflow $(LDFLAGS)
 
 
 # Build tests with pthreads (-DUSE_PTHREAD)
@@ -123,6 +138,7 @@ check: all
 	@echo "--- 65-semaphore ---"    && bin/65-semaphore
 	@echo "--- 66-cond ---"         && bin/66-cond
 	@echo "--- 67-signal ---"       && bin/67-signal
+	@echo "--- 68-mutex-errors ---" && bin/68-mutex-errors
 	@echo "--- 71-preemption ---"   && bin/71-preemption 10
 	@echo "--- 81-deadlock ---"     && bin/81-deadlock
 	@echo "--- 82-deadlock-long ---" && bin/82-deadlock-long
@@ -132,6 +148,9 @@ check: all
 	@echo "--- sum ---"                 && bin/sum
 	@echo "--- yield_priority_test ---" && bin/yield_priority_test
 	@echo "=== All tests passed ==="
+
+check-overflow: overflow-tests
+	@echo "--- 72-stack-overflow ---" && bin/72-stack-overflow
 
 # --- Utilities ---
 
@@ -160,6 +179,7 @@ valgrind: all
 	@echo "--- 64-mutex-join ---"            && $(VALGRIND) bin/64-mutex-join
 	@echo "--- 65-semaphore ---"             && $(VALGRIND) bin/65-semaphore
 	@echo "--- 66-cond ---"                  && $(VALGRIND) bin/66-cond
+	@echo "--- 68-mutex-errors ---"          && $(VALGRIND) bin/68-mutex-errors
 	@echo "--- 81-deadlock ---"              && $(VALGRIND) bin/81-deadlock
 	@echo "--- 82-deadlock-long ---"         && $(VALGRIND) bin/82-deadlock-long
 	@echo "--- matrix_mul ---"               && $(VALGRIND) bin/matrix_mul
@@ -179,4 +199,4 @@ graphs: all pthreads
 format:
 	$(CLANG_FORMAT) -i $(FORMAT_SRCS)
 
-.PHONY: all tests preemptive-tests pthreads check clang install valgrind clean graphs format report clang-format bench-plot bench-plot-quick
+.PHONY: all tests preemptive-tests overflow-tests pthreads check check-overflow clang install valgrind clean graphs format report clang-format bench-plot bench-plot-quick

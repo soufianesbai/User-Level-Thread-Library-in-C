@@ -4,13 +4,6 @@
 #include <stddef.h>
 #include <sys/queue.h>
 
-/*
- * thread_sem_init — Initialize a semaphore.
- *
- * value : number of available resources (must be >= 0).
- *
- * Returns 0 on success, -1 on error.
- */
 int thread_sem_init(thread_sem_t *sem, int value) {
   if (sem == NULL || value < 0)
     return -1;
@@ -27,11 +20,13 @@ int thread_sem_destroy(thread_sem_t *sem) {
 }
 
 /*
- * thread_sem_wait — P() operation (decrement).
+ * thread_sem_wait — P() operation (decrement / acquire).
  *
- * If count > 0 : decrement and continue immediately.
- * If count == 0 : block the current thread in the waiting_queue until
- * a thread_sem_post() wakes it up.
+ * Fast path (count > 0): decrement count and return immediately.
+ * Slow path (count == 0): block the current thread in the waiting queue
+ * until a thread_sem_post() wakes it and transfers the resource directly.
+ * When we return from the slow path, post() has already accounted for
+ * the resource (count unchanged by post in that case).
  */
 int thread_sem_wait(thread_sem_t *sem) {
   if (sem == NULL)
@@ -42,7 +37,6 @@ int thread_sem_wait(thread_sem_t *sem) {
 #endif
 
   if (sem->count > 0) {
-    // Fast path : la ressource est disponible
     sem->count--;
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
@@ -50,12 +44,11 @@ int thread_sem_wait(thread_sem_t *sem) {
     return 0;
   }
 
-  // Slow path : on se bloque jusqu'à ce qu'un post() nous réveille
   thread *prev = thread_get_current_thread();
   thread *next = thread_scheduler_pick_next();
 
   if (next == NULL) {
-    // Aucun thread ne peut faire un post() — deadlock
+    /* No thread can call post() — would deadlock. */
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
@@ -69,7 +62,7 @@ int thread_sem_wait(thread_sem_t *sem) {
   next->state = THREAD_RUNNING;
   fast_swap_context(&prev->context, &next->context);
 
-  // Quand on revient ici, post() nous a réveillés et a déjà décrémenté count.
+  /* Execution resumes here after post() woke us and transferred the resource. */
 #ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif
@@ -77,11 +70,11 @@ int thread_sem_wait(thread_sem_t *sem) {
 }
 
 /*
- * thread_sem_post — V() operation (incrémente).
+ * thread_sem_post — V() operation (increment / release).
  *
- * Si des threads attendent : réveille le premier de la file et lui
- * transfère directement la ressource (count reste inchangé).
- * Sinon : incrémente count.
+ * If threads are waiting: wake the first one and transfer the resource
+ * directly (count stays unchanged — same hand-off pattern as mutex_unlock).
+ * Otherwise: increment count so a future wait() can proceed immediately.
  */
 int thread_sem_post(thread_sem_t *sem) {
   if (sem == NULL)
@@ -92,8 +85,6 @@ int thread_sem_post(thread_sem_t *sem) {
 #endif
 
   if (!TAILQ_EMPTY(&sem->waiting_queue)) {
-    // Transfert direct : le thread réveillé obtient la ressource,
-    // count ne change pas (même logique que mutex_unlock).
     thread *revived = TAILQ_FIRST(&sem->waiting_queue);
     TAILQ_REMOVE(&sem->waiting_queue, revived, entries);
     revived->state = THREAD_READY;

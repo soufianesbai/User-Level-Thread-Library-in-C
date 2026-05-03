@@ -102,7 +102,7 @@ void thread_zombie_add(thread *t);
 /* Remove t from the zombie queue (joiner has collected the return value). */
 void thread_zombie_remove(thread *t);
 
-/* Return a pointer to the scheduler's ready queue (NULL in FIFO/ring-buffer mode). */
+/* Return a pointer to the scheduler's ready queue. */
 struct thread_queue *thread_get_ready_queue(void);
 
 /* Return non-zero if the ready queue has no runnable threads. */
