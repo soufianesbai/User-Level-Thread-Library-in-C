@@ -4,7 +4,7 @@ PYTHON ?= python3
 CFLAGS  = -Wall -Wextra -O3 -g -fPIC
 LDFLAGS = -lpthread
 RPATH_FLAGS = -Wl,-rpath,'$$ORIGIN/../lib:$$ORIGIN/..'
-MULTICORE ?= 0
+MULTICORE ?= 1
 
 THREAD_SCHED_POLICY ?= THREAD_SCHED_FIFO
 THREAD_SCHED_VALUE = $(THREAD_SCHED_POLICY)
@@ -23,6 +23,11 @@ endif
 ifeq ($(ENABLE_SIGNAL),1)
 CPPFLAGS += -DENABLE_SIGNAL
 endif
+
+# Fixed monocore flags (no THREAD_MULTICORE, no -pthread in CFLAGS)
+CPPFLAGS_MONO = -I$(INCLUDE_DIR) -DTHREAD_SCHED_POLICY=$(THREAD_SCHED_VALUE) -DTHREAD_ENABLE_GUARD_PAGE=0
+CFLAGS_MONO   = -Wall -Wextra -O3 -g -fPIC
+
 # Directories
 SRC_DIR = src
 INCLUDE_DIR = include
@@ -41,6 +46,7 @@ ASM_SRC = $(wildcard $(SRC_DIR)/*.S)
 OBJ = $(patsubst $(SRC_DIR)/%.c, %.o, $(SRC))
 LIB = libthread.so
 LIB_PREEM = libthread_preem.so
+LIB_MONO = libthread_mono.so
 
 
 # List of tests (get all .c files in test/)
@@ -52,7 +58,7 @@ FORMAT_SRCS = $(wildcard $(SRC_DIR)/*.c) $(wildcard $(INCLUDE_DIR)/*.h) $(wildca
 
 # --- Main targets ---
 
-all: compat-headers $(LIB) $(LIB_PREEM) tests preemptive-tests pthreads
+all: compat-headers $(LIB) $(LIB_PREEM) tests preemptive-tests pthreads monocore
 
 compat-headers: $(COMPAT_HEADERS)
 
@@ -62,17 +68,22 @@ thread.h:
 pool.h:
 	ln -sf $(INCLUDE_DIR)/pool.h $@
 
-# Build the shared library (.so)
+# Build the multicore shared library (default: MULTICORE=1)
 $(LIB): $(SRC) $(ASM_SRC)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -shared -o $@ $^
 
 
-# Build the preemption-enabled shared library (.so)
+# Build the preemption-enabled shared library
 $(LIB_PREEM): $(SRC) $(ASM_SRC)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DENABLE_PREEMPTION -DPREEM_ENABLED -shared -o $@ $^
 
 
-# Build tests with the standard thread library
+# Build the monocore shared library (MULTICORE=0, no pthread)
+$(LIB_MONO): $(SRC) $(ASM_SRC)
+	$(CC) $(CPPFLAGS_MONO) $(CFLAGS_MONO) -shared -o $@ $^
+
+
+# Build tests with the multicore thread library
 tests: compat-headers $(LIB)
 	@mkdir -p bin
 	@for t in $(TEST_BINS_NORMAL); do \
@@ -93,6 +104,13 @@ pthreads: compat-headers
 		$(CC) $(CPPFLAGS) $(CFLAGS) -DUSE_PTHREAD -c $(TEST_DIR)/$$t.c -o bin/$$t-pthread.o; \
 		$(CC) $(CPPFLAGS) $(CFLAGS) bin/$$t-pthread.o -o bin/$$t-pthread $(LDFLAGS); \
 		rm -f bin/$$t-pthread.o; \
+	done
+
+# Build tests with monocore library (-mono suffix)
+monocore: compat-headers $(LIB_MONO)
+	@mkdir -p bin
+	@for t in $(TEST_BINS_NORMAL); do \
+		$(CC) $(CPPFLAGS_MONO) $(CFLAGS_MONO) $(TEST_DIR)/$$t.c -L. -lthread_mono $(RPATH_FLAGS) -o bin/$$t-mono -lpthread; \
 	done
 
 # --- Installation ---
@@ -178,10 +196,10 @@ clean:
 		report/*.aux report/*.fls report/*.fdb_latexmk report/*.log report/*.out \
 		report/*.pdf report/*.synctex.gz report/*.toc report/*.bbl report/*.blg
 
-graphs: all pthreads
+graphs: all pthreads monocore
 	$(PYTHON) graph_exec_time_comparison/benchmark_plot.py --custom-tests $(ARGS)
 
 format:
 	$(CLANG_FORMAT) -i $(FORMAT_SRCS)
 
-.PHONY: all tests preemptive-tests pthreads check clang install valgrind clean graphs format report clang-format bench-plot bench-plot-quick
+.PHONY: all tests preemptive-tests pthreads monocore check clang install valgrind clean graphs format report clang-format bench-plot bench-plot-quick

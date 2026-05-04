@@ -184,6 +184,7 @@ def plot_comparison(
     x_values: list[int],
     custom_times: dict[str, dict[int, list[float]]],
     pthread_times: dict[str, dict[int, list[float]]],
+    mono_times: dict[str, dict[int, list[float]]],
     x_label: str,
     title: str,
 ) -> None:
@@ -199,9 +200,11 @@ def plot_comparison(
     for axis, test in zip(axes, selected_tests):
         y_custom = [median_or_nan(custom_times[test.name][x]) for x in x_values]
         y_pthread = [median_or_nan(pthread_times[test.name][x]) for x in x_values]
+        y_mono = [median_or_nan(mono_times[test.name][x]) for x in x_values]
 
-        axis.plot(x_values, y_custom, marker="o", linewidth=2, label="thread.c")
+        axis.plot(x_values, y_custom, marker="o", linewidth=2, label="multicore")
         axis.plot(x_values, y_pthread, marker="o", linewidth=2, label="pthread")
+        axis.plot(x_values, y_mono, marker="s", linewidth=2, linestyle="--", label="monocore")
         axis.set_title(test.name)
         axis.set_xlabel(x_label)
         axis.set_ylabel("Temps median (s)")
@@ -276,6 +279,7 @@ def run_sweep(
     timeout_s: int,
     custom_store: dict[str, dict[int, list[float]]],
     pthread_store: dict[str, dict[int, list[float]]],
+    mono_store: dict[str, dict[int, list[float]]],
     args_for_value: Callable[[TestCase, int], list[str]],
     core_for_value: Callable[[int], Optional[int]],
     progress_for_value: Callable[[TestCase, str, int], str],
@@ -292,6 +296,7 @@ def run_sweep(
                 for impl, exe in [
                     ("custom", bin_dir / test.name),
                     ("pthread", bin_dir / f"{test.name}-pthread"),
+                    ("mono", bin_dir / f"{test.name}-mono"),
                 ]:
                     done += 1
                     print(f"[{done}/{total}] {progress_for_value(test, impl, value)}", flush=True)
@@ -305,8 +310,12 @@ def run_sweep(
                     )
                     if ok:
                         success_count += 1
-                        target = custom_store if impl == "custom" else pthread_store
-                        target[test.name][value].append(dt)
+                        if impl == "custom":
+                            custom_store[test.name][value].append(dt)
+                        elif impl == "pthread":
+                            pthread_store[test.name][value].append(dt)
+                        else:
+                            mono_store[test.name][value].append(dt)
                     else:
                         print(error_for_value(test, impl, value, detail), flush=True)
 
@@ -325,13 +334,14 @@ def run_progressive_sweep(
     timeout_s: int,
     custom_store: dict[str, dict[int, list[float]]],
     pthread_store: dict[str, dict[int, list[float]]],
+    mono_store: dict[str, dict[int, list[float]]],
     args_for_value: Callable[[int], list[str]],
     progress_for_value: Callable[[str, int], str],
     error_for_value: Callable[[str, int, str], str],
 ) -> tuple[int, int]:
     done = done_start
     success_count = 0
-    active_impls = {"custom": True, "pthread": True}
+    active_impls = {"custom": True, "pthread": True, "mono": True}
 
     for value in values:
         test_args = args_for_value(value)
@@ -339,6 +349,7 @@ def run_progressive_sweep(
             for impl, exe in [
                 ("custom", bin_dir / test.name),
                 ("pthread", bin_dir / f"{test.name}-pthread"),
+                ("mono", bin_dir / f"{test.name}-mono"),
             ]:
                 if not active_impls[impl]:
                     continue
@@ -354,8 +365,12 @@ def run_progressive_sweep(
                 )
                 if ok:
                     success_count += 1
-                    target = custom_store if impl == "custom" else pthread_store
-                    target[test.name][value].append(dt)
+                    if impl == "custom":
+                        custom_store[test.name][value].append(dt)
+                    elif impl == "pthread":
+                        pthread_store[test.name][value].append(dt)
+                    else:
+                        mono_store[test.name][value].append(dt)
                 else:
                     active_impls[impl] = False
                     print(error_for_value(impl, value, detail), flush=True)
@@ -369,6 +384,7 @@ def plot_scaling(
     core_counts: list[int],
     custom_times: dict[str, dict[int, list[float]]],
     pthread_times: dict[str, dict[int, list[float]]],
+    mono_times: dict[str, dict[int, list[float]]],
 ) -> None:
     plot_comparison(
         path,
@@ -376,6 +392,7 @@ def plot_scaling(
         core_counts,
         custom_times,
         pthread_times,
+        mono_times,
         x_label="Nombre de coeurs utilises",
         title="Temps d'execution en fonction du nombre de coeurs",
     )
@@ -387,6 +404,7 @@ def plot_thread_scaling(
     thread_counts: list[int],
     custom_times: dict[str, dict[int, list[float]]],
     pthread_times: dict[str, dict[int, list[float]]],
+    mono_times: dict[str, dict[int, list[float]]],
     fixed_core_count: int,
 ) -> None:
     plot_comparison(
@@ -395,6 +413,7 @@ def plot_thread_scaling(
         thread_counts,
         custom_times,
         pthread_times,
+        mono_times,
         x_label="Nombre de threads",
         title=f"Temps d'execution en fonction du nombre de threads (coeurs fixes={fixed_core_count})",
     )
@@ -406,6 +425,7 @@ def plot_fibonacci(
     fibonacci_values: list[int],
     custom_times: dict[str, dict[int, list[float]]],
     pthread_times: dict[str, dict[int, list[float]]],
+    mono_times: dict[str, dict[int, list[float]]],
 ) -> None:
     plot_comparison(
         path,
@@ -413,6 +433,7 @@ def plot_fibonacci(
         fibonacci_values,
         custom_times,
         pthread_times,
+        mono_times,
         x_label="Valeur de fibonacci",
         title="Temps d'execution en fonction de la valeur de fibonacci",
     )
@@ -492,8 +513,11 @@ def main() -> int:
         pthread_times: dict[str, dict[int, list[float]]] = {
             fibonacci_test.name: {value: [] for value in fibonacci_values}
         }
+        mono_times: dict[str, dict[int, list[float]]] = {
+            fibonacci_test.name: {value: [] for value in fibonacci_values}
+        }
 
-        total = len(fibonacci_values) * args.runs * 2
+        total = len(fibonacci_values) * args.runs * 3
         done, success_count = run_progressive_sweep(
             test=fibonacci_test,
             values=fibonacci_values,
@@ -506,6 +530,7 @@ def main() -> int:
             timeout_s=args.timeout,
             custom_store=custom_times,
             pthread_store=pthread_times,
+            mono_store=mono_times,
             args_for_value=lambda value: [str(value)],
             progress_for_value=lambda impl, value: f"{fibonacci_test.name} {impl} fib={value}",
             error_for_value=lambda impl, value, detail: (
@@ -514,7 +539,7 @@ def main() -> int:
         )
 
         png_path = resolve_png_output_path(repo, args.png)
-        plot_fibonacci(png_path, selected_tests, fibonacci_values, custom_times, pthread_times)
+        plot_fibonacci(png_path, selected_tests, fibonacci_values, custom_times, pthread_times, mono_times)
 
         print(f"Graphe : {png_path}")
         print(f"Executions reussies: {success_count}/{total}")
@@ -526,6 +551,9 @@ def main() -> int:
     pthread_times: dict[str, dict[int, list[float]]] = {
         t.name: {core: [] for core in core_counts} for t in selected_tests
     }
+    mono_times: dict[str, dict[int, list[float]]] = {
+        t.name: {core: [] for core in core_counts} for t in selected_tests
+    }
 
     thread_scaling_tests = [test for test in selected_tests if supports_thread_scaling(test)]
     custom_thread_times: dict[str, dict[int, list[float]]] = {
@@ -534,11 +562,14 @@ def main() -> int:
     pthread_thread_times: dict[str, dict[int, list[float]]] = {
         t.name: {thread_count: [] for thread_count in thread_counts} for t in thread_scaling_tests
     }
+    mono_thread_times: dict[str, dict[int, list[float]]] = {
+        t.name: {thread_count: [] for thread_count in thread_counts} for t in thread_scaling_tests
+    }
 
     fixed_core_for_thread_scaling = max(core_counts)
 
-    total_core_runs = len(selected_tests) * args.runs * 2 * len(core_counts)
-    total_thread_runs = len(thread_scaling_tests) * args.runs * 2 * len(thread_counts)
+    total_core_runs = len(selected_tests) * args.runs * 3 * len(core_counts)
+    total_thread_runs = len(thread_scaling_tests) * args.runs * 3 * len(thread_counts)
     total = total_core_runs + total_thread_runs
     done, success_count = run_sweep(
         tests=selected_tests,
@@ -552,6 +583,7 @@ def main() -> int:
         timeout_s=args.timeout,
         custom_store=custom_times,
         pthread_store=pthread_times,
+        mono_store=mono_times,
         args_for_value=lambda test, _core: test.args,
         core_for_value=lambda core: core,
         progress_for_value=lambda test, impl, core: f"{test.name} {impl} cores={core}",
@@ -570,6 +602,7 @@ def main() -> int:
         timeout_s=args.timeout,
         custom_store=custom_thread_times,
         pthread_store=pthread_thread_times,
+        mono_store=mono_thread_times,
         args_for_value=with_thread_count_args,
         core_for_value=lambda _thread_count: fixed_core_for_thread_scaling,
         progress_for_value=lambda test, impl, thread_count: (
@@ -584,13 +617,14 @@ def main() -> int:
     png_path = resolve_png_output_path(repo, args.png)
     png_thread_path = png_path.with_name(f"{png_path.stem}_threads{png_path.suffix}")
 
-    plot_scaling(png_path, selected_tests, core_counts, custom_times, pthread_times)
+    plot_scaling(png_path, selected_tests, core_counts, custom_times, pthread_times, mono_times)
     plot_thread_scaling(
         png_thread_path,
         thread_scaling_tests,
         thread_counts,
         custom_thread_times,
         pthread_thread_times,
+        mono_thread_times,
         fixed_core_for_thread_scaling,
     )
 
