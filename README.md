@@ -107,11 +107,11 @@ make graphs ARGS="--custom-tests"
 #   --test sort      un seul test
 ```
 
-Les graphes sont générés dans `graph_exec_time_comparison/bench/`.
+Les graphes sont générés dans `plots/bench/`.
 
-## Branche multicoeur (`multiz`)
+## Branche multicoeur (`multicore`)
 
-La branche **`multiz`** étend cette bibliothèque avec un vrai parallélisme multi-cœurs :
+La branche **`multicore`** étend cette bibliothèque avec un vrai parallélisme multi-cœurs :
 
 - **Pool de workers POSIX** : N threads POSIX (pthreads) exécutent les threads utilisateur en parallèle sur autant de cœurs physiques.
 - **Ordonnanceur partagé** : file de threads prêts protégée par un mutex global, broadcast sur condition pour réveiller les workers idle.
@@ -121,7 +121,7 @@ La branche **`multiz`** étend cette bibliothèque avec un vrai parallélisme mu
 - **Tests multicoeur avancés** : épinglage de threads, fibonacci avec cutoff séquentiel, deadlock multicoeur, variables de condition sous contention.
 
 ```bash
-git checkout multiz
+git checkout multicore
 make                          # compile libthread.so (multicoeur) + libthread_mono.so
 make check                    # suite de tests complète
 make graphs ARGS="--custom-tests"   # courbes monocoeur / multicoeur / pthread
