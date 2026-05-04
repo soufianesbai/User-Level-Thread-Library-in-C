@@ -49,13 +49,8 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
     thread *revived = TAILQ_FIRST(&mutex->waiting_queue);
     TAILQ_REMOVE(&mutex->waiting_queue, revived, entries);
     revived->state = THREAD_READY;
-<<<<<<< HEAD
     thread_scheduler_enqueue_locked(revived);
-    // locked reste à 1 : le thread réveillé prend le mutex
-=======
-    thread_scheduler_enqueue(revived);
     /* locked stays 1: the revived thread takes ownership */
->>>>>>> 7281f55 (final code)
   } else {
     mutex->locked = 0;
   }
@@ -84,13 +79,9 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
 #endif
 
   if (next == NULL) {
-<<<<<<< HEAD
     TAILQ_REMOVE(&cond->waiting_queue, prev, entries);
     prev->state = THREAD_RUNNING;
     SCHED_UNLOCK();
-=======
-    /* No other thread can signal us — would deadlock. */
->>>>>>> 7281f55 (final code)
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
@@ -104,13 +95,8 @@ int thread_cond_wait(thread_cond_t *cond, thread_mutex_t *mutex) {
   next->state = THREAD_RUNNING;
   fast_swap_context(&prev->context, &next->context);
 
-<<<<<<< HEAD
-  // Quand on revient ici, signal/broadcast nous a remis dans la ready_queue.
-  // Il faut réacquérir le mutex avant de retourner.
-=======
   /* Execution resumes here after signal/broadcast re-enqueued us and the
    * scheduler picked us. Re-acquire the mutex before returning. */
->>>>>>> 7281f55 (final code)
 #ifdef ENABLE_PREEMPTION
   preem_unblock();
 #endif

@@ -23,7 +23,7 @@ static thread main_thread = {.id = 0,
 /* current thread pointer is thread-local in multicore mode so each worker has
  * its own currently-running user thread. In monocore mode this is still a
  * single global pointer (THREAD_LOCAL expands to empty). */
-static THREAD_LOCAL thread *current_thread = &main_thread;
+THREAD_LOCAL thread *current_thread = &main_thread;
 static int next_thread_id = 1;
 static int scheduler_initialized = 0;
 
@@ -207,16 +207,8 @@ static void thread_obj_release(thread *t) {
 
   thread_free(t);
 }
-<<<<<<< HEAD
-/*
-  a wrapper for the preemption signal handler that just yields the current thread.
-  sigaction take an func(int) not a func(void)
-*/
-=======
-
 /* Preemption signal handler: called by SIGVTALRM, triggers a voluntary yield.
  * sigaction requires a handler of type void(*)(int), hence the unused sig. */
->>>>>>> 7281f55 (final code)
 void preemption_handler(int sig) {
   (void)sig;
   thread_yield();
@@ -298,13 +290,8 @@ int thread_create(thread_t *newthread, void *(*func)(void *), void *funcarg) {
     reclaim_deferred_stacks_all();
   int alloc_retries = 0;
   while (stack_pool_alloc(&stack_entry) == -1) {
-    int ready_empty = 0;
     reclaim_deferred_stacks_all();
-    SCHED_LOCK();
-    ready_empty = TAILQ_EMPTY(thread_get_ready_queue());
-    SCHED_UNLOCK();
-
-    if (ready_empty || alloc_retries++ >= 4096) {
+    if (thread_ready_queue_empty() || alloc_retries++ >= 4096) {
       thread_obj_release(newth);
       errno = ENOMEM;
       return -1;

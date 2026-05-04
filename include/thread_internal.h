@@ -27,6 +27,7 @@ typedef struct thread {
   unsigned valgrind_stack_id;  // Valgrind stack ID for memory checking
   void *stack_map;             // Mapped memory for stack (for munmap)
   void *stack_base;            // Usable stack area start (= stack_map + GUARD_SIZE)
+  int stack_overflow;          // Set when the stack overflow handler fires
   struct thread *joined_by;    // The thread that is joining on this thread (if any)
   struct thread *waiting_for;  // The thread that is waiting for this thread to terminate (if any)
   int priority;                // Thread priority for scheduling
@@ -47,8 +48,12 @@ typedef struct thread {
  * canonical symbol for the variable in `thread.c`. */
 extern THREAD_LOCAL thread *current_thread;
 
-static inline thread *thread_get_current(void) { return current_thread; }
-static inline void thread_set_current(thread *t) { current_thread = t; }
+static inline thread *thread_get_current(void) {
+  return current_thread;
+}
+static inline void thread_set_current(thread *t) {
+  current_thread = t;
+}
 
 static inline int swap_thread(thread *prev, thread *next) {
   thread_set_current(next);
@@ -62,12 +67,10 @@ void reclaim_deferred_stacks_all(void);
 void thread_switch_to_cleanup(void);
 void thread_zombie_add(thread *t);
 void thread_zombie_remove(thread *t);
-<<<<<<< HEAD
-=======
-
 /* Return a pointer to the scheduler's ready queue. */
->>>>>>> 7281f55 (final code)
 struct thread_queue *thread_get_ready_queue(void);
+/* Return non-zero if the ready queue has no runnable threads. */
+int thread_ready_queue_empty(void);
 thread *thread_scheduler_pick_next(void);
 thread *thread_scheduler_pick_next_locked(void);
 void thread_scheduler_enqueue(thread *t);

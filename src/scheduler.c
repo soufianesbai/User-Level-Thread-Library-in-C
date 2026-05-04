@@ -7,12 +7,10 @@
 #include <stdlib.h>
 #include <sys/queue.h>
 
-<<<<<<< HEAD
 #ifdef THREAD_MULTICORE
 #include <pthread.h>
 #endif
 
-=======
 /*
  * ready_queue — the run queue holding all READY threads.
  *
@@ -22,7 +20,6 @@
  * Under THREAD_SCHED_PRIO threads are inserted in descending priority
  * order so the head always holds the highest-priority runnable thread.
  */
->>>>>>> 7281f55 (final code)
 static struct thread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
 
 #ifdef THREAD_MULTICORE
@@ -51,6 +48,10 @@ struct thread_queue *thread_get_ready_queue(void) {
   return &ready_queue;
 }
 
+int thread_ready_queue_empty(void) {
+  return TAILQ_EMPTY(&ready_queue);
+}
+
 static int thread_can_run_on_current_worker(const thread *t) {
 #ifdef THREAD_MULTICORE
   if (t == NULL)
@@ -66,26 +67,8 @@ static int thread_can_run_on_current_worker(const thread *t) {
 #endif
 }
 
-<<<<<<< HEAD
 void thread_scheduler_enqueue_locked(thread *t) {
   if (t == NULL || t->in_ready_queue || t->state != THREAD_READY)
-=======
-/*
- * thread_scheduler_enqueue — insert t into the ready queue.
- *
- * The in_ready_queue flag guards against double-insertion: if t is
- * already queued (e.g. called from two places racing), the second call
- * is a no-op.
- *
- * FIFO: append to tail — O(1).
- * PRIO: walk the queue to find the first thread with strictly lower
- *       priority and insert before it — O(n), but n is typically small.
- *       Threads with equal priority are appended after existing peers
- *       (stable ordering).
- */
-void thread_scheduler_enqueue(thread *t) {
-  if (t->in_ready_queue)
->>>>>>> 7281f55 (final code)
     return;
 #if THREAD_SCHED_POLICY == THREAD_SCHED_FIFO
   t->in_ready_queue = 1;

@@ -64,8 +64,7 @@ int thread_sem_wait(thread_sem_t *sem) {
   }
   SCHED_UNLOCK();
 
-<<<<<<< HEAD
-  // Slow path : on se bloque jusqu'à ce qu'un post() nous réveille
+  /* Slow path: block until a post() wakes us. */
   thread *prev = thread_get_current();
 
   SCHED_LOCK();
@@ -96,13 +95,6 @@ int thread_sem_wait(thread_sem_t *sem) {
     TAILQ_REMOVE(&sem->waiting_queue, prev, entries);
     prev->state = THREAD_RUNNING;
     SCHED_UNLOCK();
-=======
-  thread *prev = thread_get_current_thread();
-  thread *next = thread_scheduler_pick_next();
-
-  if (next == NULL) {
-    /* No thread can call post() — would deadlock. */
->>>>>>> 7281f55 (final code)
 #ifdef ENABLE_PREEMPTION
     preem_unblock();
 #endif
