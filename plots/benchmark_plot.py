@@ -129,11 +129,11 @@ def resolve_png_output_path(repo: Path, png_arg: str) -> Path:
     if output.is_absolute():
         return output
 
-    # Tout chemin relatif est normalise vers graph_exec_time_comparison/bench.
+    # Tout chemin relatif est normalise vers plots/bench.
     parts = output.parts
     if parts and parts[0] == "bench":
         output = Path(*parts[1:]) if len(parts) > 1 else Path("results.png")
-    return (repo / "graph_exec_time_comparison" / "bench" / output).resolve()
+    return (repo / "plots" / "bench" / output).resolve()
 
 
 def make_axes(test_count: int):
@@ -445,7 +445,7 @@ def main() -> int:
     parser.add_argument("--repo", default=".")
     parser.add_argument("--runs", type=int, default=2)
     parser.add_argument("--timeout", type=int, default=20, help="Timeout par test en secondes")
-    parser.add_argument("--png", default="graph_exec_time_comparison/bench/results.png")
+    parser.add_argument("--png", default="plots/bench/results.png")
     parser.add_argument("--cores", default=None, help="Liste de coeurs limites, ex: 1,2,4,8")
     parser.add_argument("--threads", default=None, help="Liste de nombres de threads pour tests 20/30, ex: 10,50,100")
     parser.add_argument("--fibonacci-start", type=int, default=1, help="Valeur de depart pour le balayage fibonacci")
@@ -634,7 +634,7 @@ def main() -> int:
     print(f"Executions reussies: {success_count}/{total}")
     return 0
 
-#commande pour compiler pour un test exemple du test 33 : make graphs ARGS="--custom-tests --test 33-switch-many-cascade --png graph_exec_time_comparison/bench/33.png --cores 1,2,4,8 --threads 10,50,100,200 --runs 3"
+#commande pour compiler pour un test exemple du test 33 : make graphs ARGS="--custom-tests --test 33-switch-many-cascade --png plots/bench/33.png --cores 1,2,4,8 --threads 10,50,100,200 --runs 3"
 if __name__ == "__main__":
     raise SystemExit(main())
 
