@@ -318,20 +318,17 @@ int thread_set_priority(thread_t t, int prio) {
   if (th->state == THREAD_READY && th->in_ready_queue) {
     TAILQ_REMOVE(&ready_queue, th, entries);
     th->in_ready_queue = 0;
-<<<<<<< HEAD
     thread_scheduler_enqueue_locked(th);
-=======
-    thread_scheduler_enqueue(th);
 
     /* If the target now outranks the calling thread, yield directly to it. */
     thread *current = thread_get_current_thread();
     if (th != current && th->priority > current->priority) {
+      SCHED_UNLOCK();
 #ifdef ENABLE_PREEMPTION
       preem_unblock();
 #endif
       return thread_yield_to(t);
     }
->>>>>>> 7281f55 (final code)
   }
 #endif
   SCHED_UNLOCK();

@@ -144,11 +144,7 @@ int thread_sigwait(thread_sigset_t set, int *sig) {
     SCHED_UNLOCK();
 
     swap_thread(prev, next);
-<<<<<<< HEAD
     thread_get_current()->state = THREAD_RUNNING;
-=======
-    /* Loop back to re-check pending signals after being woken. */
->>>>>>> 7281f55 (final code)
   }
 }
 
