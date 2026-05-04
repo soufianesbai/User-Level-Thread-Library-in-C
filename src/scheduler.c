@@ -1,9 +1,9 @@
 #include "preemption.h"
-#include "thread_sync_internal.h"
 #include "thread_internal.h"
+#include "thread_sync_internal.h"
 #include <errno.h>
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <sys/queue.h>
 
@@ -37,6 +37,14 @@ static THREAD_LOCAL int tls_worker_id = -1;
 static THREAD_LOCAL thread tls_worker_stub;
 static THREAD_LOCAL int tls_worker_stub_initialized = 0;
 static THREAD_LOCAL thread *tls_last_yielded = NULL;
+/*
+ * Deferred join: set by thread_join() on a worker before calling
+ * fast_swap_context() to the worker stub. The worker loop sets joined_by
+ * AFTER the context is fully saved, so thread_exit() cannot restore the
+ * joiner's context before the save is complete.
+ */
+static THREAD_LOCAL thread *tls_join_joiner = NULL;
+static THREAD_LOCAL thread *tls_join_target_ref = NULL;
 #endif
 
 struct thread_queue *thread_get_ready_queue(void) {
@@ -352,6 +360,19 @@ int thread_set_priority(thread_t t, int prio) {
 }
 
 #ifdef THREAD_MULTICORE
+/*
+ * thread_set_deferred_join — called from thread_join() on a worker before
+ * fast_swap_context(). The worker loop will atomically set joined_by after
+ * the context is saved, preventing thread_exit() from restoring a half-written
+ * context. Also clears tls_last_yielded so the worker loop does not re-enqueue
+ * the joiner (it is BLOCKED, not RUNNING).
+ */
+void thread_set_deferred_join(thread *joiner, thread *target) {
+  tls_join_joiner = joiner;
+  tls_join_target_ref = target;
+  tls_last_yielded = NULL;
+}
+
 static void thread_worker_stub_init(void) {
   if (tls_worker_stub_initialized)
     return;
@@ -402,6 +423,24 @@ static void *thread_worker_loop(void *arg) {
           thread_scheduler_enqueue_locked(yielded);
         }
         tls_last_yielded = NULL;
+        /*
+         * Deferred join: joiner's context is now fully saved. Set joined_by
+         * atomically under the scheduler lock so thread_exit() cannot enqueue
+         * the joiner before the save was complete. If the target already
+         * terminated while we were switching, re-enqueue the joiner directly.
+         */
+        thread *jjoiner = tls_join_joiner;
+        thread *jtarget = tls_join_target_ref;
+        tls_join_joiner = NULL;
+        tls_join_target_ref = NULL;
+        if (jjoiner != NULL) {
+          if (jtarget->state == THREAD_TERMINATED) {
+            jjoiner->state = THREAD_READY;
+            thread_scheduler_enqueue_locked(jjoiner);
+          } else {
+            jtarget->joined_by = jjoiner;
+          }
+        }
         SCHED_UNLOCK();
         goto continue_loop;
       }
@@ -410,8 +449,7 @@ static void *thread_worker_loop(void *arg) {
     SCHED_UNLOCK();
     break;
 
-  continue_loop:
-    ;
+  continue_loop:;
   }
 
   return NULL;
@@ -499,8 +537,8 @@ int thread_set_concurrency(int nworkers) {
   scheduler_running = 1;
   int created = 0;
   for (; created < effective_workers; ++created) {
-    if (pthread_create(&worker_threads[created], NULL, thread_worker_loop,
-                       (void *)(intptr_t)created) != 0) {
+    if (pthread_create(
+            &worker_threads[created], NULL, thread_worker_loop, (void *)(intptr_t)created) != 0) {
       break;
     }
   }

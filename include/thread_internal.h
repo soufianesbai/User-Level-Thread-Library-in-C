@@ -81,5 +81,8 @@ void thread_scheduler_sync_shutdown(void);
 int thread_scheduler_has_workers(void);
 thread *thread_scheduler_get_worker_stub(void);
 void thread_scheduler_wake_workers(void);
+#ifdef THREAD_MULTICORE
+void thread_set_deferred_join(thread *joiner, thread *target);
+#endif
 
 #endif // THREAD_INTERNAL_H

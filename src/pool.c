@@ -10,10 +10,10 @@
 #ifdef THREAD_MULTICORE
 #include <pthread.h>
 static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
-#define POOL_LOCK()   pthread_mutex_lock(&pool_lock)
+#define POOL_LOCK() pthread_mutex_lock(&pool_lock)
 #define POOL_UNLOCK() pthread_mutex_unlock(&pool_lock)
 #else
-#define POOL_LOCK()   ((void)0)
+#define POOL_LOCK() ((void)0)
 #define POOL_UNLOCK() ((void)0)
 #endif
 

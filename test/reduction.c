@@ -66,6 +66,9 @@ void *reduce_thread(void *arg) {
 }
 
 int main() {
+#ifdef THREAD_MULTICORE
+  thread_set_concurrency(4);
+#endif
   int *array = malloc(sizeof(int) * ARRAY_SIZE);
   assert(array != NULL);
   for (int i = 0; i < ARRAY_SIZE; ++i) {

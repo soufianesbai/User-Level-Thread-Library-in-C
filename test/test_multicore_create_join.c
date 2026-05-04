@@ -16,10 +16,7 @@ static void *unit_task(void *arg) {
 int main(void) {
   thread_set_concurrency(4);
 
-  enum {
-    ROUNDS = 20,
-    NTHREADS = 64
-  };
+  enum { ROUNDS = 20, NTHREADS = 64 };
 
   for (int round = 0; round < ROUNDS; ++round) {
     thread_t th[NTHREADS];

@@ -69,12 +69,7 @@ static void *consumer(void *arg) {
 int main(void) {
   thread_set_concurrency(4);
 
-  enum {
-    PRODUCERS = 6,
-    CONSUMERS = 6,
-    OPS_PER_THREAD = 8000,
-    CAPACITY = 32
-  };
+  enum { PRODUCERS = 6, CONSUMERS = 6, OPS_PER_THREAD = 8000, CAPACITY = 32 };
 
   if (thread_sem_init(&slots, CAPACITY) != 0) {
     return 1;

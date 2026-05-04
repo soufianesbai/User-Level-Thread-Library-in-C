@@ -53,6 +53,9 @@ void *sum_thread(void *arg) {
 }
 
 int main() {
+#ifdef THREAD_MULTICORE
+  thread_set_concurrency(4);
+#endif
   // Allocate and initialize the array
   int *array = malloc(sizeof(int) * ARRAY_SIZE);
   assert(array != NULL);

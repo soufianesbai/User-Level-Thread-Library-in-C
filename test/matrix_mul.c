@@ -35,6 +35,9 @@ void *matrix_mul_thread(void *arg) {
 }
 
 int main() {
+#ifdef THREAD_MULTICORE
+  thread_set_concurrency(4);
+#endif
   int *A = malloc(sizeof(int) * N * N);
   int *B = malloc(sizeof(int) * N * N);
   int *C = malloc(sizeof(int) * N * N);

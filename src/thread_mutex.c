@@ -1,6 +1,6 @@
 #include "preemption.h"
-#include "thread_sync_internal.h"
 #include "thread_internal.h"
+#include "thread_sync_internal.h"
 #include <errno.h>
 #include <stddef.h>
 #include <sys/queue.h>
@@ -23,9 +23,28 @@ int thread_mutex_init(thread_mutex_t *mutex) {
  * and returns EINVAL instead of silently corrupting data.
  */
 int thread_mutex_destroy(thread_mutex_t *mutex) {
-  if (mutex == NULL || !TAILQ_EMPTY(&mutex->waiting_queue))
+  if (mutex == NULL)
     return -1;
+
+#ifdef ENABLE_PREEMPTION
+  preem_block();
+#endif
+
+  SCHED_LOCK();
+  if (!TAILQ_EMPTY(&mutex->waiting_queue)) {
+    SCHED_UNLOCK();
+#ifdef ENABLE_PREEMPTION
+    preem_unblock();
+#endif
+    return -1;
+  }
+
   mutex->locked = -1;
+  SCHED_UNLOCK();
+
+#ifdef ENABLE_PREEMPTION
+  preem_unblock();
+#endif
   return 0;
 }
 
@@ -44,33 +63,6 @@ int thread_mutex_lock(thread_mutex_t *mutex) {
 
 #ifdef ENABLE_PREEMPTION
   preem_block();
-#endif
-
-#ifdef THREAD_MULTICORE
-  while (1) {
-    SCHED_LOCK();
-
-    if (mutex->locked == -1) {
-      SCHED_UNLOCK();
-      errno = EINVAL;
-#ifdef ENABLE_PREEMPTION
-      preem_unblock();
-#endif
-      return -1;
-    }
-
-    if (!mutex->locked) {
-      mutex->locked = 1;
-      SCHED_UNLOCK();
-#ifdef ENABLE_PREEMPTION
-      preem_unblock();
-#endif
-      return 0;
-    }
-
-    SCHED_UNLOCK();
-    thread_yield();
-  }
 #endif
 
   SCHED_LOCK();

@@ -573,9 +573,6 @@ int thread_join(thread_t thread_handle, void **retval) {
     return EDEADLK;
   }
 
-  // Mark the current thread as the joiner of the target
-  target->joined_by = self;
-
   // If an external thread joins the current head, it becomes the new head in O(1).
   if (target_is_head && !same_chain) {
     self->head_joiner = target->head_joiner;
@@ -588,6 +585,32 @@ int thread_join(thread_t thread_handle, void **retval) {
   if (target->state != THREAD_TERMINATED) {
     self->state = THREAD_BLOCKED;
     self->waiting_for = target;
+
+#ifdef THREAD_MULTICORE
+    thread *worker_stub = thread_scheduler_get_worker_stub();
+    if (worker_stub != NULL) {
+      /*
+       * Multicore worker path: we must not call swap_thread() directly because
+       * thread_exit() could enqueue us (via joined_by) before fast_swap_context
+       * finishes saving our registers, letting another worker restore a
+       * half-written context.  Instead:
+       *   1. Register the deferred join in TLS (no lock needed — TLS is per-worker).
+       *   2. Switch back to the worker stub via fast_swap_context.
+       *   3. The worker loop sets joined_by atomically under the scheduler lock
+       *      AFTER the save is complete — safe from that point on.
+       */
+      thread_set_deferred_join(self, target);
+      fast_swap_context(&self->context, &worker_stub->context);
+      /* Resumed here after thread_exit() re-enqueues us. */
+      self->waiting_for = NULL;
+      self->state = THREAD_RUNNING;
+      goto join_after_block;
+    }
+#endif
+
+    /* Monocore: single-threaded cooperative scheduling — safe to set joined_by
+     * immediately and switch directly. */
+    target->joined_by = self;
 
     thread *prev = self;
     thread *next = thread_scheduler_pick_next();
@@ -638,6 +661,10 @@ int thread_join(thread_t thread_handle, void **retval) {
     self->waiting_for = NULL;
     self->state = THREAD_RUNNING;
   }
+
+#ifdef THREAD_MULTICORE
+join_after_block:
+#endif
 
 #ifdef ENABLE_PREEMPTION
   preem_unblock();

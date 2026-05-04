@@ -1,7 +1,7 @@
 #include "thread_sem.h"
 #include "preemption.h"
-#include "thread_sync_internal.h"
 #include "thread_internal.h"
+#include "thread_sync_internal.h"
 #include <stddef.h>
 #include <sys/queue.h>
 

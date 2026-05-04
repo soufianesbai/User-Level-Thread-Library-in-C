@@ -16,11 +16,31 @@
  * - retour sans thread_exit()
  */
 
+#ifdef THREAD_MULTICORE
+#define FIBO_CUTOFF 15
+static unsigned long fibo_seq(unsigned long n) {
+  if (n < 3)
+    return 1;
+  unsigned long a = 1, b = 1, c = 0;
+  for (unsigned long i = 2; i < n; i++) {
+    c = a + b;
+    a = b;
+    b = c;
+  }
+  return c;
+}
+#endif
+
 static void *fibo(void *_value) {
   thread_t th, th2;
   int err;
   void *res = NULL, *res2 = NULL;
   unsigned long value = (unsigned long)_value;
+
+#ifdef THREAD_MULTICORE
+  if (value <= FIBO_CUTOFF)
+    return (void *)fibo_seq(value);
+#endif
 
   /* on passe un peu la main aux autres pour eviter de faire uniquement la
    * partie gauche de l'arbre */
@@ -69,6 +89,9 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
+#ifdef THREAD_MULTICORE
+  thread_set_concurrency(4);
+#endif
   value = atoi(argv[1]);
   gettimeofday(&tv1, NULL);
   res = (unsigned long)fibo((void *)value);
